@@ -1,0 +1,363 @@
+import { useMemo, useState, type FormEvent } from 'react';
+import { createBooking, fetchDashboard } from '../services/api';
+import type { Booking, DashboardResponse, TableInfo, User } from '../types';
+import { venueNow } from '../utils/time';
+
+type CourtState = 'trong' | 'dat' | 'choi' | 'lop' | 'hoc' | 'dong';
+type CourtStatus = { state: CourtState; booking?: Booking; className?: string; end?: number };
+type Filter = 'all' | CourtState;
+
+const stateLabels: Record<CourtState, string> = {
+  trong: 'Trống',
+  dat: 'Đã đặt',
+  choi: 'Đang chơi',
+  lop: 'Đang dạy',
+  hoc: 'Khu dạy học',
+  dong: 'Đóng cửa',
+};
+const bookingLabels: Record<Booking['status'], [string, string]> = {
+  PENDING: ['Chờ xác nhận', 't-am'],
+  CONFIRMED: ['Đã xác nhận', 't-bl'],
+  CHECKED_IN: ['Đang chơi', 't-rd'],
+  CHECKED_OUT: ['Hoàn thành', 't-ok'],
+  CANCELLED: ['Đã hủy', 't-gr'],
+};
+const money = (amount: number) => `${Math.round(amount).toLocaleString('vi-VN')}đ`;
+const timeText = (date: Date) => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+const dateText = (value: string) => new Date(value).toLocaleDateString('vi-VN');
+const dayKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+interface CourtPageProps {
+  dashboard: DashboardResponse;
+  user: User;
+  demoClock: boolean;
+  onNotify: (message: string) => void;
+}
+
+export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPageProps) {
+  const isStaff = user.role === 'MANAGER' || user.role === 'STAFF';
+  const [selectedTable, setSelectedTable] = useState<number | null>(null);
+  const [filter, setFilter] = useState<Filter>('all');
+  const [date, setDate] = useState(() => dayKey(venueNow(demoClock)));
+  const [time, setTime] = useState(() => timeText(venueNow(demoClock)));
+  const [live, setLive] = useState(true);
+  const [search, setSearch] = useState('');
+  const [data, setData] = useState(dashboard);
+  const viewedAt = live ? venueNow(demoClock) : new Date(`${date}T${time || '06:00'}:00`);
+
+  const getStatus = (table: TableInfo): CourtStatus => {
+    const hour = viewedAt.getHours() + viewedAt.getMinutes() / 60;
+    const opening = data.config.openingHour;
+    const closing = data.config.closingHour;
+    if (hour < opening || hour >= closing) return { state: 'dong' };
+
+    const classSession = data.classes.find((item) => {
+      if (item.status !== 'approved' || !item.tables.includes(table.tableNumber)) return false;
+      const start = new Date(item.date);
+      return dayKey(start) === dayKey(viewedAt) && hour >= item.startHour && hour < item.endHour;
+    });
+    if (classSession) return { state: 'lop', className: classSession.teacherName, end: classSession.endHour };
+
+    const booking = data.bookings.find((item) => {
+      if (item.tableId !== table.tableNumber || !['PENDING', 'CONFIRMED', 'CHECKED_IN'].includes(item.status)) return false;
+      const start = new Date(item.startTime);
+      const end = new Date(start.getTime() + item.duration * 60 * 60 * 1000);
+      return viewedAt >= start && viewedAt < end;
+    });
+    if (booking) {
+      return {
+        state: booking.status === 'CHECKED_IN' ? 'choi' : 'dat',
+        booking,
+        end: new Date(new Date(booking.startTime).getTime() + booking.duration * 60 * 60 * 1000).getTime(),
+      };
+    }
+
+    if (live && table.status === 'busy') return { state: 'choi' };
+    if (table.zone === 'teaching' && hour < data.config.classCutoffHour) return { state: 'hoc' };
+    return { state: 'trong' };
+  };
+
+  const counts = useMemo(() => {
+    const result = { trong: 0, dat: 0, choi: 0, lop: 0 };
+    data.tables.forEach((table) => {
+      const state = getStatus(table).state;
+      if (state in result) result[state as keyof typeof result] += 1;
+    });
+    return result;
+  }, [data, date, time, live]);
+
+  const refresh = async () => {
+    const fresh = await fetchDashboard();
+    setData(fresh);
+  };
+
+  const selected = data.tables.find((table) => table.tableNumber === selectedTable) ?? null;
+
+  return (
+    <>
+      <div className="pg-h">
+        <div>
+          <h2>Sơ đồ sân</h2>
+          <p>{isStaff ? 'Theo dõi thời gian thực, check-in và check-out ngay trên sân. Bấm vào bàn để xem chi tiết.' : user.role === 'TEACHER' ? 'Xem sân và đặt bàn lớp học ở khu dạy học. Hệ thống tự phân 2 bàn cho lớp.' : 'Xem sân theo ngày giờ và đặt bàn. Hệ thống tự phân bàn trống cho bạn.'}</p>
+        </div>
+        <div className="legend">
+          {(['trong', 'dat', 'choi', 'lop'] as CourtState[]).map((state) => <span className={`tag st-${state}`} key={state}>{stateLabels[state]}</span>)}
+          <span className="tag st-hoc">Khu dạy học / đóng cửa</span>
+        </div>
+      </div>
+
+      <div className="two">
+        <section className="card" aria-label="Xem sân">
+          <div className="fg">
+            <div><label htmlFor="court-date">Ngày</label><input className="in" type="date" id="court-date" min={isStaff ? undefined : dayKey(new Date())} value={date} onChange={(event) => { setDate(event.target.value); setLive(false); }} /></div>
+            <div><label htmlFor="court-time">Giờ</label><div className="row-in"><input className="in" type="time" id="court-time" value={time} onChange={(event) => { setTime(event.target.value); setLive(false); }} /><button className="btn ghost sm" type="button" onClick={() => { const now = venueNow(demoClock); setDate(dayKey(now)); setTime(timeText(now)); setLive(true); }}>Bây giờ</button></div></div>
+          </div>
+          <p className="hint" style={{ margin: '8px 0 12px' }}>
+            <span className={`tag ${live ? 't-ok' : 't-am'}`}>{live ? 'Thời gian thực' : `Đang xem ${time} · ${dateText(`${date}T00:00:00`)}`}</span>
+            {' '}{live ? 'Bản đồ tự cập nhật theo dữ liệu hiện tại.' : 'Bấm "Bây giờ" để về thời gian thực.'}
+          </p>
+          {isStaff && <StaffSearch value={search} onChange={setSearch} bookings={data.bookings} onSelect={(booking) => setSelectedTable(booking.tableId)} />}
+          <label>Trạng thái sân</label>
+          <div className="chips" role="group" aria-label="Lọc trạng thái">
+            {([
+              ['all', 'Tất cả', 16],
+              ['trong', 'Trống', counts.trong],
+              ['dat', 'Đã đặt', counts.dat],
+              ['choi', 'Đang chơi', counts.choi],
+              ['lop', 'Đang dạy', counts.lop],
+            ] as [Filter, string, number][]).map(([id, label, count]) => (
+              <button className="fchip" type="button" key={id} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label} <b>{count}</b></button>
+            ))}
+          </div>
+
+          <div className="court-map">
+            {Array.from({ length: 4 }, (_, row) => (
+              <div className="row-d" key={row}>
+                <small>Dãy {row + 1}{row === 0 ? ` · khu dạy học (mở cho khách sau ${data.config.classCutoffHour}:00)` : ''}</small>
+                <div className="row-t">
+                  {data.tables.filter((table) => Math.floor((table.tableNumber - 1) / 4) === row).map((table) => {
+                    const status = getStatus(table);
+                    const dimmed = filter !== 'all' && filter !== status.state;
+                    const description = status.booking ? `${status.booking.customerName} · đến ${timeText(new Date(status.end ?? Date.now()))}` : status.className ? `${status.className} · đến ${status.end}:00` : '';
+                    const content = <><span className="n">{table.tableNumber}</span><span className="s">{stateLabels[status.state]}</span><span className="w">{description}</span></>;
+                    return isStaff ? (
+                      <button key={table.id} className={`tile st-${status.state}${dimmed ? ' dim' : ''}`} type="button" data-t={table.tableNumber} aria-pressed={selectedTable === table.tableNumber} aria-label={`Bàn ${table.tableNumber}, ${stateLabels[status.state]}`} onClick={() => setSelectedTable(selectedTable === table.tableNumber ? null : table.tableNumber)}>{content}</button>
+                    ) : (
+                      <div key={table.id} className={`tile st-${status.state}${dimmed ? ' dim' : ''}`} role="img" aria-label={`Bàn ${table.tableNumber}, ${stateLabels[status.state]}`}>{content}</div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <div className="col">
+          <section className="card" aria-label={isStaff && selected ? 'Chi tiết bàn' : 'Đặt bàn'}>
+            {isStaff && selected
+              ? <CourtDetail table={selected} status={getStatus(selected)} config={data.config} onBack={() => setSelectedTable(null)} />
+              : user.role === 'TEACHER'
+                ? <ClassRequest config={data.config} onNotify={onNotify} />
+                : <BookingForm dashboard={data} user={user} onNotify={onNotify} onRefresh={refresh} />}
+          </section>
+          <section className="card">
+            {isStaff
+              ? <WaitlistPanel bookings={data.bookings} />
+              : <MyBookings bookings={data.bookings.filter((booking) => booking.phone === user.phone)} />}
+          </section>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function CourtDetail({ table, status, config, onBack }: { table: TableInfo; status: CourtStatus; config: DashboardResponse['config']; onBack: () => void }) {
+  const booking = status.booking;
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+        <div><small className="hint">Chi tiết bàn</small><div className="pill-big">{table.tableNumber}</div></div>
+        <span className={`tag st-${status.state}`}>{stateLabels[status.state]}</span>
+      </div>
+      {booking ? (
+        <dl className="det">
+          <dt>Tên khách</dt><dd>{booking.customerName}</dd>
+          <dt>Loại khách</dt><dd>{booking.type === 'MEMBER' ? 'Khách tháng' : booking.type === 'TEACHER' ? 'Giáo viên' : 'Khách vãng lai'}</dd>
+          <dt>Số người chơi</dt><dd>{booking.people}</dd>
+          <dt>Thời gian bắt đầu</dt><dd>{timeText(new Date(booking.startTime))}</dd>
+          <dt>Thời lượng</dt><dd>{booking.duration} giờ</dd>
+          <dt>Dự kiến kết thúc</dt><dd>{timeText(new Date(status.end ?? Date.now()))}</dd>
+          <dt>Trạng thái đặt</dt><dd>{bookingLabels[booking.status][0]}</dd>
+        </dl>
+      ) : status.state === 'lop' ? (
+        <p className="hint" style={{ margin: '10px 0' }}>{status.className} đang sử dụng bàn này. Lớp kết thúc lúc {status.end}:00.</p>
+      ) : status.state === 'trong' ? (
+        <p className="hint" style={{ margin: '10px 0' }}>Bàn trống lúc {timeText(new Date())}. Sức chứa tối đa {table.capacity} người.</p>
+      ) : status.state === 'hoc' ? (
+        <p className="hint" style={{ margin: '10px 0' }}>Bàn thuộc khu dạy học. Chỉ mở cho khách sau {config.classCutoffHour}:00 và khi không có lớp.</p>
+      ) : (
+        <p className="hint" style={{ margin: '10px 0' }}>Ngoài giờ mở cửa ({String(config.openingHour).padStart(2, '0')}:00 – {String(config.closingHour).padStart(2, '0')}:00).</p>
+      )}
+      <button className="btn ghost" style={{ width: '100%', marginTop: 12 }} type="button" onClick={onBack}>Về khung đặt bàn</button>
+    </>
+  );
+}
+
+function StaffSearch({ value, onChange, bookings, onSelect }: { value: string; onChange: (value: string) => void; bookings: Booking[]; onSelect: (booking: Booking) => void }) {
+  const matches = bookings.filter((booking) => ['CONFIRMED', 'PENDING', 'CHECKED_IN'].includes(booking.status) && `${booking.customerName} ${booking.phone} ${booking.id}`.toLowerCase().includes(value.toLowerCase())).slice(0, 6);
+  return (
+    <>
+      <label htmlFor="court-search">Check-in</label>
+      <input className="in" id="court-search" placeholder="Tìm theo tên, mã bàn hoặc SĐT" value={value} onChange={(event) => onChange(event.target.value)} />
+      {value && <ul className="res-list">{matches.map((booking) => (
+        <li key={booking.id}>
+          <span><b>Bàn {booking.tableId}</b> · {booking.customerName}<br /><small className="hint">#{booking.id} · {booking.phone} · {timeText(new Date(booking.startTime))}</small></span>
+          <button className="btn sm" type="button" onClick={() => onSelect(booking)}>{booking.status === 'CHECKED_IN' ? 'Xem bàn' : 'Chi tiết'}</button>
+        </li>
+      ))}{!matches.length && <li><span className="hint">Không tìm thấy lượt đặt phù hợp.</span></li>}</ul>}
+      <div style={{ height: 12 }} />
+    </>
+  );
+}
+
+function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: DashboardResponse; user: User; onNotify: (message: string) => void; onRefresh: () => Promise<void> }) {
+  const [name, setName] = useState(user.name);
+  const [phone, setPhone] = useState(user.phone);
+  const [email, setEmail] = useState(user.email);
+  const [bookingDate, setBookingDate] = useState(dayKey(new Date()));
+  const [startTime, setStartTime] = useState(() => timeText(new Date()));
+  const [duration, setDuration] = useState(dashboard.config.defaultHours);
+  const [people, setPeople] = useState(2);
+  const [submitting, setSubmitting] = useState(false);
+  const cost = people * duration * dashboard.config.courtPrice;
+  const endTime = (() => {
+    const [hour, minute] = startTime.split(':').map(Number);
+    const total = hour * 60 + minute + duration * 60;
+    return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+  })();
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const errors: string[] = [];
+    if (!name.trim()) errors.push('Nhập họ tên khách.');
+    if (!/^(\+?84|0)\d{9,10}$/.test(phone.replace(/[\s().-]/g, ''))) errors.push('Số điện thoại không hợp lệ.');
+    if (!bookingDate || !startTime) errors.push('Chọn ngày và giờ bắt đầu.');
+    if (people < 1 || people > dashboard.config.maxPeoplePerTable) errors.push(`Mỗi bàn tối đa ${dashboard.config.maxPeoplePerTable} người.`);
+    const start = new Date(`${bookingDate}T${startTime}:00`);
+    const now = new Date();
+    if (start < now) errors.push('Giờ bắt đầu đã qua, vui lòng chọn giờ khác.');
+    if (start.getHours() < dashboard.config.openingHour || start.getHours() + duration > dashboard.config.closingHour) errors.push('Thời lượng phải nằm trong giờ mở cửa.');
+    const availableTable = dashboard.tables.find((table) => {
+      if (table.zone === 'teaching' && start.getHours() < dashboard.config.classCutoffHour) return false;
+      return table.status === 'available';
+    });
+    if (!availableTable) errors.push('Hiện chưa có bàn trống phù hợp.');
+    if (errors.length) {
+      onNotify(errors[0]);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await createBooking({
+        tableId: availableTable!.tableNumber,
+        customerName: name.trim(),
+        phone,
+        email,
+        type: user.role === 'MEMBER' ? 'MEMBER' : 'WALK_IN',
+        startTime: start.toISOString(),
+        duration,
+        people,
+        amount: user.role === 'MEMBER' ? 0 : cost,
+        memberId: user.memberId ?? null,
+      });
+      await onRefresh();
+      onNotify(`Đặt bàn thành công: Bàn ${availableTable!.tableNumber} · ${bookingDate} ${startTime}.`);
+    } catch (reason) {
+      onNotify(reason instanceof Error ? reason.message : 'Không thể tạo lượt đặt.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <h3>Đặt bàn</h3>
+      <p className="hint" style={{ marginTop: 4 }}>Hệ thống tự phân bàn trống, bạn không cần chọn bàn. Mặc định chơi 2 giờ, tối đa {dashboard.config.maxPeoplePerTable} người mỗi bàn.</p>
+      <form noValidate style={{ marginTop: 12 }} onSubmit={submit}>
+        <div className="fg">
+          <div className="full"><label htmlFor="bk-name">Họ tên khách</label><input className="in" id="bk-name" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} /></div>
+          <div><label htmlFor="bk-phone">Số điện thoại</label><input className="in" id="bk-phone" inputMode="tel" autoComplete="tel" value={phone} onChange={(event) => setPhone(event.target.value)} /></div>
+          <div><label htmlFor="bk-email">Email (không bắt buộc)</label><input className="in" id="bk-email" inputMode="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
+          <div><label htmlFor="bk-date">Ngày</label><input className="in" type="date" id="bk-date" value={bookingDate} min={dayKey(new Date())} onChange={(event) => setBookingDate(event.target.value)} /></div>
+          <div><label htmlFor="bk-time">Giờ bắt đầu</label><select className="in" id="bk-time" value={startTime} onChange={(event) => setStartTime(event.target.value)}>{Array.from({ length: (dashboard.config.closingHour - dashboard.config.openingHour) * 2 }, (_, index) => { const mins = dashboard.config.openingHour * 60 + index * 30; const value = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`; return <option key={value} value={value}>{value}</option>; })}</select></div>
+          <div><label htmlFor="bk-dur">Thời lượng</label><select className="in" id="bk-dur" value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{[1, 1.5, 2, 2.5, 3, 3.5, 4].map((hours) => <option key={hours} value={hours}>{hours % 1 ? `${Math.floor(hours)} giờ 30` : `${hours} giờ`}</option>)}</select></div>
+          <div><label>Giờ dự kiến kết thúc</label><div className="in ro">{endTime}</div></div>
+          <div><label htmlFor="bk-people">Số người (tối đa 4)</label><select className="in" id="bk-people" value={people} onChange={(event) => setPeople(Number(event.target.value))}>{[1, 2, 3, 4].map((count) => <option key={count} value={count}>{count}</option>)}</select></div>
+          <div className="full hint">{user.role === 'MEMBER' ? 'Khách tháng: lượt sử dụng được ghi nhận theo gói, không thu tiền chơi.' : `Tạm tính: ${people} người × ${duration} × ${money(dashboard.config.courtPrice)} = ${money(cost)}`}</div>
+          <div className="full"><button className="btn red" style={{ width: '100%' }} type="submit" disabled={submitting}>{submitting ? 'Đang đặt...' : 'Đặt bàn'}</button></div>
+        </div>
+      </form>
+    </>
+  );
+}
+
+function ClassRequest({ config, onNotify }: { config: DashboardResponse['config']; onNotify: (message: string) => void }) {
+  const [date, setDate] = useState(dayKey(new Date()));
+  const [start, setStart] = useState(10);
+  const [teacher, setTeacher] = useState('Giáo viên');
+  const [sending, setSending] = useState(false);
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (start + 2 > config.classCutoffHour || start < config.openingHour) {
+      onNotify(`Lớp chỉ được học trong khoảng ${config.openingHour}:00 – ${config.classCutoffHour}:00.`);
+      return;
+    }
+    setSending(true);
+    onNotify('Đăng ký lớp học cần API lớp học; API hiện tại chỉ đọc danh sách lớp.');
+    window.setTimeout(() => setSending(false), 350);
+  };
+  return (
+    <>
+      <h3>Đặt bàn lớp học</h3>
+      <p className="hint" style={{ marginTop: 4 }}>Giáo viên chỉ đặt ở khu dạy học. Hệ thống tự phân 2 bàn, lớp kéo dài 2 giờ và kết thúc trước {config.classCutoffHour}:00.</p>
+      <form noValidate style={{ marginTop: 12 }} onSubmit={submit}>
+        <div className="fg">
+          <div className="full"><label htmlFor="cl-teacher">Giáo viên phụ trách</label><input className="in" id="cl-teacher" value={teacher} onChange={(event) => setTeacher(event.target.value)} /></div>
+          <div><label htmlFor="cl-date">Ngày học</label><input className="in" type="date" id="cl-date" value={date} min={dayKey(new Date())} onChange={(event) => setDate(event.target.value)} /></div>
+          <div><label htmlFor="cl-start">Giờ bắt đầu</label><select className="in" id="cl-start" value={start} onChange={(event) => setStart(Number(event.target.value))}>{Array.from({ length: config.classCutoffHour - config.openingHour - 1 }, (_, index) => config.openingHour + index).map((hour) => <option value={hour} key={hour}>{String(hour).padStart(2, '0')}:00</option>)}</select></div>
+          <div><label>Giờ kết thúc (tự tính)</label><div className="in ro">{String(start + 2).padStart(2, '0')}:00</div></div>
+          <div><label>Trạng thái phê duyệt</label><div className="in ro">Chờ phê duyệt</div></div>
+          <div><label>Số tiền dự kiến</label><div className="in ro">Theo cấu hình sân</div></div>
+          <div className="full"><button className="btn red" type="submit" style={{ width: '100%' }} disabled={sending}>Đặt bàn lớp học</button></div>
+        </div>
+      </form>
+    </>
+  );
+}
+
+function MyBookings({ bookings }: { bookings: Booking[] }) {
+  return (
+    <>
+      <h3>Lịch đặt bàn của tôi</h3>
+      {bookings.length ? <ul className="res-list" style={{ marginTop: 10 }}>{bookings.slice(0, 12).map((booking) => {
+        const status = bookingLabels[booking.status];
+        const start = new Date(booking.startTime);
+        return <li key={booking.id} style={{ alignItems: 'flex-start', flexWrap: 'wrap' }}><div style={{ minWidth: 0 }}><b>Bàn {booking.tableId}</b> · {dateText(booking.startTime)} {timeText(start)} · {booking.duration} giờ<br /><small className="hint">Mã #{booking.id} · {booking.people} người</small></div><span className={`tag ${status[1]}`}>{status[0]}</span></li>;
+      })}</ul> : <p className="hint" style={{ marginTop: 10 }}>Bạn chưa có lượt đặt nào.</p>}
+    </>
+  );
+}
+
+function WaitlistPanel({ bookings }: { bookings: Booking[] }) {
+  return (
+    <>
+      <h3>Danh sách chờ</h3>
+      <div className="ovf" style={{ marginTop: 10 }}>
+        <table><thead><tr><th>Khách</th><th>SĐT</th><th>Người</th><th>Thời gian</th><th>Tình trạng</th></tr></thead>
+          <tbody>{bookings.filter((booking) => booking.status === 'PENDING').map((booking) => <tr key={booking.id}><td>{booking.customerName}</td><td>{booking.phone}</td><td className="num">{booking.people}</td><td className="num">{timeText(new Date(booking.startTime))} · {booking.duration} giờ</td><td><span className="tag t-am">Đang chờ</span></td></tr>)}</tbody>
+        </table>
+      </div>
+      {!bookings.some((booking) => booking.status === 'PENDING') && <p className="hint" style={{ marginTop: 8 }}>Chưa có khách nào đang chờ.</p>}
+    </>
+  );
+}
