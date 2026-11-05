@@ -1,9 +1,11 @@
 import axios from 'axios';
 import type { DashboardResponse, User } from '../types';
 
+const apiBaseUrl = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
+
 const api = axios.create({
-  baseURL: 'http://localhost:4000/api',
-  timeout: 8000,
+  baseURL: apiBaseUrl,
+  timeout: 10000,
 });
 
 // Đính kèm token xác thực vào mọi request nếu có trong localStorage

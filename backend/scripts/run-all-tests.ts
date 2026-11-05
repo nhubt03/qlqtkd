@@ -3,6 +3,9 @@
  * Bao phủ 100% Yêu cầu chức năng (FR01 - FR21) và Quy tắc nghiệp vụ (BR01 - BR10)
  */
 
+// Đặt môi trường kiểm thử cô lập
+process.env.NODE_ENV = 'test';
+
 import app from '../src/app.js';
 import { dashboardData } from '../src/data/mock.js';
 import http from 'http';

@@ -5,8 +5,13 @@ import { dashboardData } from './data/mock.js';
 import { isDbConnected } from './services/db.js';
 import { sendBookingConfirmationEmail, getEmailLogs, sendOtpEmail } from './services/mailer.js';
 import { sweepExpiredBookings } from './services/scheduler.js';
+import { initStorage, persistStore } from './services/storage.js';
+import { hashPassword, verifyPassword, createJwtToken } from './services/security.js';
 
 dotenv.config();
+
+// Khởi tạo hệ thống lưu trữ vĩnh viễn (Data Persistence on Disk)
+initStorage();
 
 const app = express();
 
@@ -72,16 +77,22 @@ const handleLogin = (req: express.Request, res: express.Response) => {
   }
 
   const passStr = String(password || '');
-  const isMatch =
-    user.password === passStr ||
-    ((user.password === 'admin123' || user.password === '123456') && (passStr === 'admin123' || passStr === '123456' || passStr === 'password123'));
+  const isMatch = verifyPassword(passStr, user.password);
 
   if (!isMatch) {
     return res.status(401).json({ message: 'Sai tài khoản hoặc mật khẩu.' });
   }
 
+  // Cấp phát JSON Web Token (JWT HS256) chuẩn chữ ký số
+  const token = createJwtToken({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    name: user.name,
+  });
+
   const { password: _password, ...safeUser } = user;
-  return res.json({ ok: true, user: safeUser, token: 'admin-token' });
+  return res.json({ ok: true, user: safeUser, token });
 };
 
 app.post('/api/auth/login', handleLogin);
@@ -140,10 +151,11 @@ app.post(['/api/dang-ky', '/api/auth/register'], (req, res) => {
     name: String(ho_ten),
     email: String(email || ''),
     phone: String(sdt),
-    password: String(mat_khau || '123456'),
+    password: hashPassword(String(mat_khau || '123456')), // Mã hóa mật khẩu an toàn
     role: (vai_tro || 'GUEST') as any,
   };
   dashboardData.users.push(newUser);
+  persistStore(); // Lưu vĩnh viễn xuống đĩa
   res.status(201).json({ ok: true, message: 'Đăng ký tài khoản thành công.', user: newUser });
 });
 
@@ -263,6 +275,7 @@ const handleBookingCreation = (req: express.Request, res: express.Response) => {
     });
   }
 
+  persistStore();
   res.status(201).json(booking);
 };
 
@@ -298,6 +311,7 @@ const handleCheckIn = (req: express.Request, res: express.Response) => {
     table.status = 'busy';
   }
 
+  persistStore();
   res.json({ ok: true, message: `Check-in thành công bàn ${booking.tableId} cho ${booking.customerName}.`, booking });
 };
 
@@ -359,6 +373,7 @@ const handleCheckOut = (req: express.Request, res: express.Response) => {
     table.status = 'busy';
   }
 
+  persistStore();
   res.json({ ok: true, amount: finalAmount, message, booking });
 };
 
@@ -560,6 +575,8 @@ const handleActivateMember = (req: express.Request, res: express.Response) => {
     createdAt: new Date().toISOString(),
   });
 
+  persistStore(); // Lưu dữ liệu vĩnh viễn
+
   res.status(201).json({
     ok: true,
     message: `Kích hoạt thành công ${pack.name} cho khách hàng ${newMember.name}! Đã nạp ${pack.turns} lượt chơi vào thẻ hội viên.`,
@@ -596,11 +613,12 @@ const handleCreateStaff = (req: express.Request, res: express.Response) => {
     name: String(name).trim(),
     phone: cleanPhone,
     email: cleanEmail,
-    password: String(password).trim(),
+    password: hashPassword(String(password).trim()), // Mã hóa mật khẩu Scrypt
     role: 'STAFF' as const,
   };
 
   dashboardData.users.push(newStaff);
+  persistStore(); // Lưu dữ liệu vĩnh viễn
 
   const { password: _p, ...safeStaff } = newStaff;
   res.status(201).json({
@@ -652,6 +670,7 @@ const handleRenewMember = (req: express.Request, res: express.Response) => {
   });
 
   const remaining = member.totalTurns - member.usedTurns;
+  persistStore(); // Lưu dữ liệu vĩnh viễn
   res.json({
     ok: true,
     message: `Gia hạn ${pack.name} thành công cho ${member.name}. Tổng lượt mới: ${remaining}/${member.totalTurns} lượt.`,
@@ -725,6 +744,7 @@ app.post('/api/scheduler/sweep', (req, res) => {
 // Cấu hình
 app.post('/api/config', (req, res) => {
   dashboardData.config = { ...dashboardData.config, ...req.body };
+  persistStore(); // Lưu dữ liệu vĩnh viễn
   res.json({ ok: true, message: 'Đã lưu cấu hình thành công.', config: dashboardData.config });
 });
 
