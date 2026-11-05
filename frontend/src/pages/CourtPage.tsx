@@ -2,6 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { createBooking, fetchDashboard } from '../services/api';
 import type { Booking, DashboardResponse, TableInfo, User } from '../types';
 import { venueNow } from '../utils/time';
+import { validateCustomerContact } from '../utils/validation';
 
 type CourtState = 'trong' | 'dat' | 'choi' | 'lop' | 'hoc' | 'dong';
 type CourtStatus = { state: CourtState; booking?: Booking; className?: string; end?: number };
@@ -238,9 +239,12 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const contactValidation = validateCustomerContact(name, phone, email, true);
+    if (!contactValidation.valid) {
+      onNotify(contactValidation.errors[0]);
+      return;
+    }
     const errors: string[] = [];
-    if (!name.trim()) errors.push('Nhập họ tên khách.');
-    if (!/^(\+?84|0)\d{9,10}$/.test(phone.replace(/[\s().-]/g, ''))) errors.push('Số điện thoại không hợp lệ.');
     if (!bookingDate || !startTime) errors.push('Chọn ngày và giờ bắt đầu.');
     if (people < 1 || people > dashboard.config.maxPeoplePerTable) errors.push(`Mỗi bàn tối đa ${dashboard.config.maxPeoplePerTable} người.`);
     const start = new Date(`${bookingDate}T${startTime}:00`);
