@@ -787,28 +787,71 @@ app.post('/api/ai/chat', (req, res) => {
   const { message } = req.body ?? {};
   const raw = String(message || '').toLowerCase();
 
+  // 1. Số người
   let people = 2;
-  const pMatch = raw.match(/(\d+)\s*(người|nguoi|ng|bạn|khách)/);
+  const pMatch = raw.match(/(\d+)\s*(người|nguoi|ng|bạn|ban|khách|khach)/);
   if (pMatch) people = Math.min(4, Math.max(1, parseInt(pMatch[1], 10)));
+  else if (raw.includes('đánh đôi') || raw.includes('danh doi')) people = 4;
+  else if (raw.includes('đánh đơn') || raw.includes('danh don')) people = 2;
 
-  let duration = 2;
-  const dMatch = raw.match(/(\d+(\.\d+)?)\s*(tiếng|tieng|h|giờ|gio)/);
-  if (dMatch) duration = parseFloat(dMatch[1]);
+  // 2. Ngày
+  const today = new Date();
+  let targetDate = new Date(today);
+  const explicitDate = raw.match(/(?:ngày\s+)?(\d{1,2})(?:[\/\-](\d{1,2})(?:[\/\-](\d{4}))?|\s+tháng\s+(\d{1,2})(?:\s+năm\s+(\d{4}))?)/);
+  if (explicitDate) {
+    const d = parseInt(explicitDate[1], 10);
+    const m = parseInt(explicitDate[2] || explicitDate[4], 10);
+    const y = explicitDate[3] || explicitDate[5] ? parseInt(explicitDate[3] || explicitDate[5], 10) : today.getFullYear();
+    targetDate = new Date(y, m - 1, d);
+  } else if (raw.includes('mai')) {
+    targetDate.setDate(today.getDate() + 1);
+  } else if (raw.includes('mốt') || raw.includes('mot')) {
+    targetDate.setDate(today.getDate() + 2);
+  }
+  const dateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
 
+  // 3. Giờ bắt đầu
   let time = '19:00';
-  const tMatch = raw.match(/(\d{1,2})\s*(h|giờ|:00)/);
-  if (tMatch) time = `${String(tMatch[1]).padStart(2, '0')}:00`;
+  const prefixTime = raw.match(/(?:từ|tu|lúc|luc|vào|vao)\s+(\d{1,2})(?::(\d{2})|\s*(?:h|giờ|gio)(?:\s*(\d{2}))?)?\s*(tối|toi|chiều|chieu|sáng|sang|pm|am)?/);
+  if (prefixTime) {
+    let h = parseInt(prefixTime[1], 10);
+    const m = prefixTime[2] || prefixTime[3] ? parseInt(prefixTime[2] || prefixTime[3], 10) : 0;
+    const period = prefixTime[4] || '';
+    if ((period.includes('tối') || period.includes('toi') || period.includes('chiều') || period.includes('chieu') || period === 'pm') && h < 12) h += 12;
+    time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  } else {
+    const suffixTime = raw.match(/(\d{1,2})(?::(\d{2})|\s*(?:h|giờ|gio)(?:\s*(\d{2}))?)\s*(tối|toi|chiều|chieu|sáng|sang|pm|am)/);
+    if (suffixTime) {
+      let h = parseInt(suffixTime[1], 10);
+      const m = suffixTime[2] || suffixTime[3] ? parseInt(suffixTime[2] || suffixTime[3], 10) : 0;
+      const period = suffixTime[4] || '';
+      if ((period.includes('tối') || period.includes('toi') || period.includes('chiều') || period.includes('chieu') || period === 'pm') && h < 12) h += 12;
+      time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    } else {
+      const genericTime = raw.match(/(?<!trong\s|chơi\s|choi\s)(\b(1[0-9]|2[0-2]|[6-9])\s*(?:h|:00)\b)/);
+      if (genericTime) {
+        time = `${String(genericTime[2]).padStart(2, '0')}:00`;
+      }
+    }
+  }
+
+  // 4. Thời lượng
+  let duration = 2;
+  const durMatch = raw.match(/(?:trong|chơi|choi)?\s*(\d+(\.\d+)?)\s*(?:tiếng|tieng|tiếng đồng hồ)\b/)
+    || raw.match(/(?<!từ\s|tu\s|lúc\s|luc\s|vào\s|vao\s)(\d+(\.\d+)?)\s*(?:giờ|gio)(?!\s*(?:tối|toi|chiều|chieu|sáng|sang|am|pm))\b/);
+  if (durMatch) duration = parseFloat(durMatch[1]);
 
   const extracted = {
+    date: dateStr,
     people,
     duration,
     time,
-    confidence: 90,
+    confidence: 95,
   };
 
   res.json({
     ok: true,
-    reply: `Trợ lý AI đã nhận diện ý định đặt bàn: lúc ${time}, ${people} người chơi trong ${duration} giờ.`,
+    reply: `Trợ lý AI đã nhận diện ý định đặt bàn: ngày ${dateStr} lúc ${time}, ${people} người chơi trong ${duration} giờ.`,
     extracted,
   });
 });

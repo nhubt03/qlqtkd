@@ -43,10 +43,10 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
   const parseBookingIntent = (text: string): ExtractedBooking | null => {
     const raw = text.toLowerCase();
 
-    // Nhận dạng số người (vd: 4 người, 4 ng, 2 bạn, đánh đôi -> 4, đánh đơn -> 2)
+    // 1. Nhận dạng số người (vd: 4 người, 4 ng, 2 bạn, đánh đôi -> 4, đánh đơn -> 2)
     let people = 2;
     let hasPeople = false;
-    const peopleMatch = raw.match(/(\d+)\s*(người|nguoi|ng|bạn|khách)/);
+    const peopleMatch = raw.match(/(\d+)\s*(người|nguoi|ng|bạn|ban|khách|khach)/);
     if (peopleMatch) {
       people = Math.min(4, Math.max(1, parseInt(peopleMatch[1], 10)));
       hasPeople = true;
@@ -58,52 +58,98 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
       hasPeople = true;
     }
 
-    // Nhận dạng thời lượng (vd: 2 tiếng, 2h, 1.5h, 3 giờ)
-    let duration = 2;
-    let hasDuration = false;
-    const durMatch = raw.match(/(\d+(\.\d+)?)\s*(tiếng|tieng|h|giờ|gio)/);
-    if (durMatch && !raw.includes('lúc') && !raw.includes('ngày')) {
-      duration = parseFloat(durMatch[1]);
-      hasDuration = true;
-    }
-
-    // Nhận dạng ngày (hôm nay, hn, hnay, tối mai, mai, ngày mai)
+    // 2. Nhận dạng ngày chơi (hỗ trợ cụ thể: 15/11, ngày 15/11, 15-11, ngày 15 tháng 11, ngày 15, hôm nay, mai, mốt)
     const today = new Date();
     let targetDate = new Date(today);
     let hasDate = false;
 
-    if (raw.includes('mai') || raw.includes('ngay mai') || raw.includes('tối mai')) {
-      targetDate.setDate(today.getDate() + 1);
-      hasDate = true;
-    } else if (raw.includes('hôm nay') || raw.includes('hnay') || raw.includes('hn') || raw.includes('tối nay')) {
-      hasDate = true;
+    // 2.1. Nhận dạng ngày cụ thể: 15/11, 15/11/2026, ngày 15/11, 15-11, ngày 15 tháng 11
+    const explicitDateMatch = raw.match(/(?:ngày\s+)?(\d{1,2})(?:[\/\-](\d{1,2})(?:[\/\-](\d{4}))?|\s+tháng\s+(\d{1,2})(?:\s+năm\s+(\d{4}))?)/);
+    if (explicitDateMatch) {
+      const d = parseInt(explicitDateMatch[1], 10);
+      const m = parseInt(explicitDateMatch[2] || explicitDateMatch[4], 10);
+      const y = explicitDateMatch[3] || explicitDateMatch[5] ? parseInt(explicitDateMatch[3] || explicitDateMatch[5], 10) : today.getFullYear();
+      if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+        targetDate = new Date(y, m - 1, d);
+        hasDate = true;
+      }
+    } else {
+      const singleDayMatch = raw.match(/ngày\s+(\d{1,2})\b/);
+      if (singleDayMatch) {
+        const d = parseInt(singleDayMatch[1], 10);
+        if (d >= 1 && d <= 31) {
+          targetDate = new Date(today.getFullYear(), today.getMonth(), d);
+          hasDate = true;
+        }
+      }
+    }
+
+    // 2.2. Nhận dạng ngày tương đối
+    if (!hasDate) {
+      if (raw.includes('mai') || raw.includes('ngay mai') || raw.includes('tối mai') || raw.includes('chieu mai') || raw.includes('sáng mai')) {
+        targetDate.setDate(today.getDate() + 1);
+        hasDate = true;
+      } else if (raw.includes('mốt') || raw.includes('ngay mot') || raw.includes('ngày kia')) {
+        targetDate.setDate(today.getDate() + 2);
+        hasDate = true;
+      } else if (raw.includes('hôm nay') || raw.includes('hnay') || raw.includes('hn') || raw.includes('tối nay') || raw.includes('chieu nay') || raw.includes('sáng nay')) {
+        hasDate = true;
+      }
     }
 
     const dateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
 
-    // Nhận dạng giờ (vd: 7h tối, 19h, 19:00, 7h, 8h30, 20h)
+    // 3. Nhận dạng giờ bắt đầu (start time)
+    // Ưu tiên các cụm rõ nghĩa: "từ 20 giờ tối", "từ 20h", "lúc 20:00", "20 giờ tối", "20h", "8h tối", "8 giờ tối"
     let timeStr = '19:00';
     let hasTime = false;
 
-    const time12Match = raw.match(/(\d{1,2})\s*h\s*(tối|toi|chiều|chieu|pm)/);
-    const timeMatch = raw.match(/(\d{1,2})([:h](\d{2}))?/);
-
-    if (time12Match) {
-      let h = parseInt(time12Match[1], 10);
-      if (h < 12) h += 12;
-      timeStr = `${String(h).padStart(2, '0')}:00`;
+    // Tìm giờ có từ khóa định vị: "từ X giờ", "lúc X giờ", "vào lúc X giờ", "từ Xh", "lúc Xh", "từ X:XX", "lúc X:XX"
+    const prefixTimeMatch = raw.match(/(?:từ|tu|lúc|luc|vào|vao)\s+(\d{1,2})(?::(\d{2})|\s*(?:h|giờ|gio)(?:\s*(\d{2}))?)?\s*(tối|toi|chiều|chieu|sáng|sang|pm|am)?/);
+    if (prefixTimeMatch) {
+      let h = parseInt(prefixTimeMatch[1], 10);
+      const m = prefixTimeMatch[2] || prefixTimeMatch[3] ? parseInt(prefixTimeMatch[2] || prefixTimeMatch[3], 10) : 0;
+      const period = prefixTimeMatch[4] || '';
+      if ((period.includes('tối') || period.includes('toi') || period.includes('chiều') || period.includes('chieu') || period === 'pm') && h < 12) {
+        h += 12;
+      }
+      timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
       hasTime = true;
     } else {
-      const specificHour = raw.match(/(?:lúc|vào|lúc\s+)?(\d{1,2})\s*h/);
-      if (specificHour) {
-        let h = parseInt(specificHour[1], 10);
-        if ((raw.includes('tối') || raw.includes('toi')) && h < 12) h += 12;
-        timeStr = `${String(h).padStart(2, '0')}:00`;
+      // Tìm giờ có buổi đi kèm: "20 giờ tối", "20h tối", "8h tối", "8 giờ tối", "8h chiều", "7h pm"
+      const suffixTimeMatch = raw.match(/(\d{1,2})(?::(\d{2})|\s*(?:h|giờ|gio)(?:\s*(\d{2}))?)\s*(tối|toi|chiều|chieu|sáng|sang|pm|am)/);
+      if (suffixTimeMatch) {
+        let h = parseInt(suffixTimeMatch[1], 10);
+        const m = suffixTimeMatch[2] || suffixTimeMatch[3] ? parseInt(suffixTimeMatch[2] || suffixTimeMatch[3], 10) : 0;
+        const period = suffixTimeMatch[4] || '';
+        if ((period.includes('tối') || period.includes('toi') || period.includes('chiều') || period.includes('chieu') || period === 'pm') && h < 12) {
+          h += 12;
+        }
+        timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
         hasTime = true;
+      } else {
+        // Tìm giờ định dạng 24h: 19h, 20h, 19:00, 20:00 (không nằm trong cụm "trong X giờ" hoặc "chơi X giờ")
+        const genericTime = raw.match(/(?<!trong\s|chơi\s|choi\s)(\b(1[0-9]|2[0-2]|[6-9])\s*(?:h|:00)\b)/);
+        if (genericTime) {
+          const h = parseInt(genericTime[2], 10);
+          timeStr = `${String(h).padStart(2, '0')}:00`;
+          hasTime = true;
+        }
       }
     }
 
-    // Tính độ tin cậy
+    // 4. Nhận dạng thời lượng (duration: 2 tiếng, 2 giờ, 1.5h, 3 tiếng, trong 2 giờ)
+    let duration = 2;
+    let hasDuration = false;
+    const durMatch = raw.match(/(?:trong|chơi|choi)?\s*(\d+(\.\d+)?)\s*(?:tiếng|tieng|tiếng đồng hồ)\b/)
+      || raw.match(/(?<!từ\s|tu\s|lúc\s|luc\s|vào\s|vao\s)(\d+(\.\d+)?)\s*(?:giờ|gio)(?!\s*(?:tối|toi|chiều|chieu|sáng|sang|am|pm))\b/);
+
+    if (durMatch) {
+      duration = parseFloat(durMatch[1]);
+      hasDuration = true;
+    }
+
+    // 5. Tính độ tin cậy
     let score = 0;
     if (hasPeople) score += 25;
     if (hasDate) score += 25;
@@ -126,7 +172,7 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     return null;
   };
 
-  const answer = (raw: string): { text: string; extracted?: ExtractedBooking } => {
+    const answer = (raw: string): { text: string; extracted?: ExtractedBooking } => {
     const text = raw.toLowerCase().trim();
 
     // 1. Thử phân tích ý định đặt bàn bằng NLP
