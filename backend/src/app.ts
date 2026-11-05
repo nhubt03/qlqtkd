@@ -15,7 +15,6 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.get('/api/dashboard', (_req, res) => {
-  // Cập nhật lại stats động
   dashboardData.stats = {
     totalRevenue: dashboardData.payments.reduce((sum, item) => sum + item.amount, 0),
     todayBookings: dashboardData.bookings.length,
@@ -25,9 +24,12 @@ app.get('/api/dashboard', (_req, res) => {
   res.json(dashboardData);
 });
 
-app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body ?? {};
-  const cleaned = String(email || '').toLowerCase().trim();
+// ==========================================
+// 1. XÁC THỰC (ĐĂNG NHẬP / ĐĂNG KÝ)
+// ==========================================
+const handleLogin = (req: express.Request, res: express.Response) => {
+  const { email, password, sdt } = req.body ?? {};
+  const cleaned = String(email || sdt || '').toLowerCase().trim();
 
   const user = dashboardData.users.find(
     (item) => (item.email.toLowerCase() === cleaned || item.phone === cleaned) && item.password === String(password || '')
@@ -38,90 +40,54 @@ app.post('/api/auth/login', (req, res) => {
   }
 
   const { password: _password, ...safeUser } = user;
-  return res.json({ user: safeUser, token: 'demo-token' });
-});
+  return res.json({ ok: true, user: safeUser, token: 'demo-token' });
+};
 
-app.get('/api/tables', (_req, res) => {
-  res.json(dashboardData.tables);
-});
+app.post('/api/auth/login', handleLogin);
+app.post('/api/dang-nhap', handleLogin);
 
-app.get('/api/members', (_req, res) => {
-  res.json(dashboardData.members);
-});
-
-app.get('/api/bookings', (_req, res) => {
-  res.json(dashboardData.bookings);
-});
-
-app.get('/api/classes', (_req, res) => {
-  res.json(dashboardData.classes);
-});
-
-// Giáo viên đăng ký lớp học: tự động phân bổ 2 bàn khu dạy học (bàn 1-4), kết thúc trước 19:00
-app.post('/api/classes', (req, res) => {
-  const body = req.body ?? {};
-  const startHour = Number(body.startHour ?? 10);
-  const endHour = startHour + 2;
-
-  if (startHour < dashboardData.config.openingHour || endHour > dashboardData.config.classCutoffHour) {
-    return res.status(400).json({ message: `Lớp học chỉ được đăng ký từ ${dashboardData.config.openingHour}:00 đến trước ${dashboardData.config.classCutoffHour}:00.` });
+app.post('/api/dang-ky', (req, res) => {
+  const { ho_ten, sdt, email, mat_khau, vai_tro } = req.body ?? {};
+  if (!ho_ten || !sdt) {
+    return res.status(400).json({ message: 'Vui lòng cung cấp họ tên và số điện thoại.' });
   }
 
-  // Tự động phân bổ 2 bàn trống thuộc khu dạy học (1,2 hoặc 3,4)
-  const sessionDateStr = new Date(body.date ?? Date.now()).toDateString();
-  const existingClasses = dashboardData.classes.filter(
-    (c) =>
-      c.status !== 'rejected' &&
-      new Date(c.date).toDateString() === sessionDateStr &&
-      !(endHour <= c.startHour || startHour >= c.endHour)
-  );
-
-  const usedTables = new Set<number>();
-  existingClasses.forEach((c) => c.tables.forEach((t) => usedTables.add(t)));
-
-  let allocatedTables: number[] = [];
-  if (!usedTables.has(1) && !usedTables.has(2)) {
-    allocatedTables = [1, 2];
-  } else if (!usedTables.has(3) && !usedTables.has(4)) {
-    allocatedTables = [3, 4];
-  } else {
-    return res.status(400).json({ message: 'Khu dạy học (bàn 1-4) đã kín lớp trong khung giờ này. Vui lòng chọn giờ khác.' });
-  }
-
-  const newClass = {
-    id: dashboardData.classes.length + 1,
-    teacherId: Number(body.teacherId ?? 3),
-    teacherName: String(body.teacherName ?? 'Giáo viên'),
-    date: new Date(body.date ?? Date.now()).toISOString(),
-    startHour,
-    endHour,
-    tables: allocatedTables,
-    status: 'pending' as const,
+  const newUser = {
+    id: dashboardData.users.length + 1,
+    name: String(ho_ten),
+    email: String(email || ''),
+    phone: String(sdt),
+    password: String(mat_khau || '123456'),
+    role: (vai_tro || 'GUEST') as any,
   };
-
-  dashboardData.classes.push(newClass);
-  res.status(201).json({ ok: true, message: `Đã gửi yêu cầu đăng ký lớp học (${allocatedTables.join(', ')}). Chờ quản lý phê duyệt.`, classSession: newClass });
+  dashboardData.users.push(newUser);
+  res.status(201).json({ ok: true, message: 'Đăng ký tài khoản thành công.', user: newUser });
 });
 
-app.get('/api/payments', (_req, res) => {
-  res.json(dashboardData.payments);
-});
+// ==========================================
+// 2. SÂN VÀ BÀN
+// ==========================================
+app.get('/api/tables', (_req, res) => res.json(dashboardData.tables));
+app.get('/api/ban', (_req, res) => res.json(dashboardData.tables));
+app.get('/api/ban/ban-do', (_req, res) => res.json({ tables: dashboardData.tables, bookings: dashboardData.bookings, classes: dashboardData.classes }));
 
-// Đặt bàn online hoặc trực tiếp
-app.post('/api/bookings', (req, res) => {
+// ==========================================
+// 3. ĐẶT BÀN
+// ==========================================
+const handleBookingCreation = (req: express.Request, res: express.Response) => {
   const body = req.body ?? {};
   const booking = {
     id: dashboardData.bookings.length + 1,
-    tableId: Number(body.tableId),
-    customerName: String(body.customerName ?? ''),
-    phone: String(body.phone ?? ''),
-    email: String(body.email ?? ''),
-    type: (body.type ?? 'WALK_IN') as 'WALK_IN' | 'MEMBER' | 'TEACHER',
-    startTime: new Date(body.startTime ?? Date.now()).toISOString(),
-    duration: Number(body.duration ?? 2),
-    people: Number(body.people ?? 2),
-    status: (body.status ?? 'CONFIRMED') as 'PENDING' | 'CONFIRMED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'CANCELLED',
-    amount: Number(body.amount ?? 0),
+    tableId: Number(body.tableId || body.ban_id || 0),
+    customerName: String(body.customerName || body.ho_ten || ''),
+    phone: String(body.phone || body.sdt || ''),
+    email: String(body.email || ''),
+    type: (body.type || body.loai || 'WALK_IN') as 'WALK_IN' | 'MEMBER' | 'TEACHER',
+    startTime: new Date(body.startTime || body.bat_dau || Date.now()).toISOString(),
+    duration: Number(body.duration || body.thoi_luong || 2),
+    people: Number(body.people || body.so_nguoi || 2),
+    status: (body.status || 'CONFIRMED') as any,
+    amount: Number(body.amount || body.tien || 0),
     memberId: body.memberId ?? null,
   };
 
@@ -133,11 +99,27 @@ app.post('/api/bookings', (req, res) => {
   }
 
   res.status(201).json(booking);
+};
+
+app.get('/api/bookings', (_req, res) => res.json(dashboardData.bookings));
+app.post('/api/bookings', handleBookingCreation);
+app.post('/api/dat-ban', handleBookingCreation);
+
+app.post('/api/dat-ban/:id/huy', (req, res) => {
+  const id = Number(req.params.id);
+  const booking = dashboardData.bookings.find((b) => b.id === id);
+  if (!booking) return res.status(404).json({ message: 'Không tìm thấy lượt đặt.' });
+  booking.status = 'CANCELLED';
+  const table = dashboardData.tables.find((t) => t.tableNumber === booking.tableId);
+  if (table) table.status = 'available';
+  res.json({ ok: true, message: `Đã hủy lượt đặt #${id} và giải phóng bàn.` });
 });
 
-// Check-in bàn
-app.post('/api/bookings/:id/checkin', (req, res) => {
-  const id = Number(req.params.id);
+// ==========================================
+// 4. CHECK-IN / CHECK-OUT
+// ==========================================
+const handleCheckIn = (req: express.Request, res: express.Response) => {
+  const id = Number(req.params.id || req.body.bookingId || req.body.id);
   const booking = dashboardData.bookings.find((b) => b.id === id);
 
   if (!booking) {
@@ -151,11 +133,13 @@ app.post('/api/bookings/:id/checkin', (req, res) => {
   }
 
   res.json({ ok: true, message: `Check-in thành công bàn ${booking.tableId} cho ${booking.customerName}.`, booking });
-});
+};
 
-// Check-out bàn và tính tiền / trừ lượt
-app.post('/api/bookings/:id/checkout', (req, res) => {
-  const id = Number(req.params.id);
+app.post('/api/bookings/:id/checkin', handleCheckIn);
+app.post('/api/checkin', handleCheckIn);
+
+const handleCheckOut = (req: express.Request, res: express.Response) => {
+  const id = Number(req.params.id || req.body.bookingId || req.body.id);
   const booking = dashboardData.bookings.find((b) => b.id === id);
 
   if (!booking) {
@@ -183,14 +167,13 @@ app.post('/api/bookings/:id/checkout', (req, res) => {
       createdAt: new Date().toISOString(),
     });
   } else if (booking.type === 'MEMBER') {
-    // Trừ lượt khách tháng
     const member = dashboardData.members.find((m) => m.id === booking.memberId || m.phone === booking.phone);
     if (member) {
       member.usedTurns += 1;
       const left = Math.max(0, member.totalTurns - member.usedTurns);
       if (left <= 0) member.status = 'expired';
       else if (left <= 5) member.status = 'warning';
-      message = `Check-out thành công. Khách tháng đã dùng 1 lượt (còn ${left}/${member.totalTurns} lượt). Không thu tiền mặt.`;
+      message = `Check-out thành công. Khách tháng đã dùng 1 lượt (còn ${left}/${member.totalTurns} lượt). Không thu tiền.`;
     } else {
       message = 'Check-out thành công cho khách tháng.';
     }
@@ -198,7 +181,7 @@ app.post('/api/bookings/:id/checkout', (req, res) => {
     message = 'Check-out lớp dạy thành công. Ghi nhận 1 lượt dạy (250.000đ) vào bảng tổng hợp cuối tháng.';
   }
 
-  // Tự động giải phóng bàn và kiểm tra phân bổ khách từ hàng chờ nếu có
+  // Phân bổ bàn cho hàng chờ nếu có
   const waitIndex = dashboardData.bookings.findIndex((b) => b.status === 'PENDING');
   if (waitIndex !== -1 && table) {
     const nextWait = dashboardData.bookings[waitIndex];
@@ -208,21 +191,26 @@ app.post('/api/bookings/:id/checkout', (req, res) => {
   }
 
   res.json({ ok: true, amount: finalAmount, message, booking });
-});
+};
 
-// Hàng chờ (Waitlist)
-app.post('/api/waitlist', (req, res) => {
+app.post('/api/bookings/:id/checkout', handleCheckOut);
+app.post('/api/checkout', handleCheckOut);
+
+// ==========================================
+// 5. HÀNG CHỜ (WAITLIST)
+// ==========================================
+const handleWaitlist = (req: express.Request, res: express.Response) => {
   const body = req.body ?? {};
   const waitItem = {
     id: dashboardData.bookings.length + 1,
     tableId: 0,
-    customerName: String(body.customerName ?? ''),
-    phone: String(body.phone ?? ''),
-    email: String(body.email ?? ''),
-    type: (body.type ?? 'WALK_IN') as 'WALK_IN' | 'MEMBER' | 'TEACHER',
-    startTime: new Date(body.startTime ?? Date.now()).toISOString(),
-    duration: Number(body.duration ?? 2),
-    people: Number(body.people ?? 2),
+    customerName: String(body.customerName || body.ho_ten || ''),
+    phone: String(body.phone || body.sdt || ''),
+    email: String(body.email || ''),
+    type: (body.type || body.loai || 'WALK_IN') as any,
+    startTime: new Date(body.startTime || body.bat_dau || Date.now()).toISOString(),
+    duration: Number(body.duration || body.thoi_luong || 2),
+    people: Number(body.people || body.so_nguoi || 2),
     status: 'PENDING' as const,
     amount: 0,
     memberId: body.memberId ?? null,
@@ -230,15 +218,81 @@ app.post('/api/waitlist', (req, res) => {
 
   dashboardData.bookings.push(waitItem);
   res.status(201).json(waitItem);
+};
+
+app.post('/api/waitlist', handleWaitlist);
+app.post('/api/hang-cho', handleWaitlist);
+
+app.post('/api/hang-cho/:id/xac-nhan', (req, res) => {
+  const id = Number(req.params.id);
+  const booking = dashboardData.bookings.find((b) => b.id === id && b.status === 'PENDING');
+  if (!booking) return res.status(404).json({ message: 'Không tìm thấy lượt chờ.' });
+
+  const available = dashboardData.tables.find((t) => t.status === 'available');
+  if (!available) return res.status(400).json({ message: 'Chưa có bàn trống để gán cho khách.' });
+
+  booking.tableId = available.tableNumber;
+  booking.status = 'CONFIRMED';
+  available.status = 'busy';
+  res.json({ ok: true, message: `Đã phân bổ Bàn ${available.tableNumber} cho khách ${booking.customerName}.`, booking });
 });
 
-// Duyệt lớp học
-app.post('/api/classes/:id/approve', (req, res) => {
+// ==========================================
+// 6. LỚP HỌC & DUYỆT LỚP
+// ==========================================
+const handleClassCreation = (req: express.Request, res: express.Response) => {
+  const body = req.body ?? {};
+  const startHour = Number(body.startHour ?? body.bat_dau ?? 10);
+  const endHour = startHour + 2;
+
+  if (startHour < dashboardData.config.openingHour || endHour > dashboardData.config.classCutoffHour) {
+    return res.status(400).json({ message: `Lớp học chỉ được đăng ký từ ${dashboardData.config.openingHour}:00 đến trước ${dashboardData.config.classCutoffHour}:00.` });
+  }
+
+  const sessionDateStr = new Date(body.date ?? body.ngay ?? Date.now()).toDateString();
+  const existingClasses = dashboardData.classes.filter(
+    (c) =>
+      c.status !== 'rejected' &&
+      new Date(c.date).toDateString() === sessionDateStr &&
+      !(endHour <= c.startHour || startHour >= c.endHour)
+  );
+
+  const usedTables = new Set<number>();
+  existingClasses.forEach((c) => c.tables.forEach((t) => usedTables.add(t)));
+
+  let allocatedTables: number[] = [];
+  if (!usedTables.has(1) && !usedTables.has(2)) {
+    allocatedTables = [1, 2];
+  } else if (!usedTables.has(3) && !usedTables.has(4)) {
+    allocatedTables = [3, 4];
+  } else {
+    return res.status(400).json({ message: 'Khu dạy học (bàn 1-4) đã kín lớp trong khung giờ này. Vui lòng chọn giờ khác.' });
+  }
+
+  const newClass = {
+    id: dashboardData.classes.length + 1,
+    teacherId: Number(body.teacherId ?? 3),
+    teacherName: String(body.teacherName ?? body.giao_vien_ten ?? 'Giáo viên'),
+    date: new Date(body.date ?? body.ngay ?? Date.now()).toISOString(),
+    startHour,
+    endHour,
+    tables: allocatedTables,
+    status: 'pending' as const,
+  };
+
+  dashboardData.classes.push(newClass);
+  res.status(201).json({ ok: true, message: `Đã đăng ký lớp học (${allocatedTables.join(', ')}). Chờ duyệt.`, classSession: newClass });
+};
+
+app.get('/api/classes', (_req, res) => res.json(dashboardData.classes));
+app.post('/api/classes', handleClassCreation);
+app.post('/api/lop-hoc', handleClassCreation);
+
+const handleClassApprove = (req: express.Request, res: express.Response) => {
   const id = Number(req.params.id);
   const session = dashboardData.classes.find((c) => c.id === id);
   if (!session) return res.status(404).json({ message: 'Không tìm thấy lớp học.' });
 
-  // Kiểm tra xung đột: bàn và giờ với các lớp đã duyệt khác
   const conflict = dashboardData.classes.find(
     (c) =>
       c.id !== id &&
@@ -249,27 +303,34 @@ app.post('/api/classes/:id/approve', (req, res) => {
   );
 
   if (conflict) {
-    return res.status(400).json({ message: `Xung đột lịch với lớp học đã duyệt của ${conflict.teacherName} (giờ ${conflict.startHour}:00 - ${conflict.endHour}:00, bàn ${conflict.tables.join(', ')}).` });
+    return res.status(400).json({ message: `Xung đột lịch với lớp học đã duyệt của ${conflict.teacherName}.` });
   }
 
   session.status = 'approved';
   res.json({ ok: true, message: `Đã duyệt lớp học thành công cho ${session.teacherName}.`, session });
-});
+};
 
-// Từ chối lớp học
+app.post('/api/classes/:id/approve', handleClassApprove);
+app.post('/api/lop-hoc/:id/duyet', handleClassApprove);
+
 app.post('/api/classes/:id/reject', (req, res) => {
   const id = Number(req.params.id);
   const session = dashboardData.classes.find((c) => c.id === id);
   if (!session) return res.status(404).json({ message: 'Không tìm thấy lớp học.' });
-
   session.status = 'rejected';
   res.json({ ok: true, message: `Đã từ chối lớp học của ${session.teacherName}.`, session });
 });
 
-// Gia hạn gói thành viên (CỘNG DỒN LƯỢT theo đúng đặc tả)
-app.post('/api/members/:id/renew', (req, res) => {
+// ==========================================
+// 7. KHÁCH THÁNG & GIA HẠN GÓI CỘNG DỒN LƯỢT
+// ==========================================
+app.get('/api/members', (_req, res) => res.json(dashboardData.members));
+app.get('/api/khach-thang', (_req, res) => res.json(dashboardData.members));
+
+const handleRenewMember = (req: express.Request, res: express.Response) => {
   const id = Number(req.params.id);
-  const { packageId } = req.body ?? {};
+  const { packageId, goi_id } = req.body ?? {};
+  const selectedPackage = packageId || goi_id || 'p1';
   const member = dashboardData.members.find((m) => m.id === id);
   if (!member) return res.status(404).json({ message: 'Không tìm thấy hội viên.' });
 
@@ -279,19 +340,16 @@ app.post('/api/members/:id/renew', (req, res) => {
     p6: { months: 6, price: 1999000, turns: 180, name: 'Gói 6 tháng' },
   };
 
-  const pack = packConfig[packageId] || packConfig['p1'];
+  const pack = packConfig[selectedPackage] || packConfig['p1'];
 
-  // CỘNG DỒN số lượt: Tổng lượt = tổng lượt cũ + số lượt gói mới mua
-  member.totalTurns += pack.turns;
-  member.packageType = packageId;
+  member.totalTurns += pack.turns; // CỘNG DỒN LƯỢT
+  member.packageType = selectedPackage;
   member.status = 'active';
 
-  // Gia hạn ngày kết thúc
   const currentEnd = new Date(member.endDate) > new Date() ? new Date(member.endDate) : new Date();
   currentEnd.setDate(currentEnd.getDate() + pack.months * 30);
   member.endDate = currentEnd.toISOString();
 
-  // Ghi nhận doanh thu bán gói
   dashboardData.payments.push({
     id: dashboardData.payments.length + 1,
     type: 'goi',
@@ -307,9 +365,36 @@ app.post('/api/members/:id/renew', (req, res) => {
     message: `Gia hạn ${pack.name} thành công cho ${member.name}. Tổng lượt mới: ${remaining}/${member.totalTurns} lượt.`,
     member,
   });
+};
+
+app.post('/api/members/:id/renew', handleRenewMember);
+app.post('/api/khach-thang/:id/gia-han', handleRenewMember);
+
+// ==========================================
+// 8. THỐNG KÊ DOANH THU & GIỜ CAO ĐIỂM
+// ==========================================
+app.get('/api/payments', (_req, res) => res.json(dashboardData.payments));
+app.get('/api/thong-ke/doanh-thu', (_req, res) => {
+  res.json({
+    totalRevenue: dashboardData.payments.reduce((sum, item) => sum + item.amount, 0),
+    payments: dashboardData.payments,
+  });
 });
 
-// Cập nhật cấu hình
+app.get('/api/thong-ke/gio-cao-diem', (_req, res) => {
+  res.json({ peakHour: '17:00 - 20:00', status: 'high', suggestion: 'Bố trí thêm 2 nhân viên quầy' });
+});
+
+// ==========================================
+// 9. AI ENDPOINTS (AI-1, AI-2, AI-3)
+// ==========================================
+app.get('/api/ai/du-bao', (_req, res) => {
+  res.json({ peakHours: ['17:00', '18:00', '19:00', '20:00'], level: 'high' });
+});
+
+app.post('/api/ai/dat-ban', handleBookingCreation);
+
+// Cấu hình
 app.post('/api/config', (req, res) => {
   dashboardData.config = { ...dashboardData.config, ...req.body };
   res.json({ ok: true, message: 'Đã lưu cấu hình thành công.', config: dashboardData.config });
