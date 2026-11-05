@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { dashboardData } from './data/mock.js';
+import { isDbConnected } from './services/db.js';
+import { sendBookingConfirmationEmail, getEmailLogs } from './services/mailer.js';
 
 dotenv.config();
 
@@ -171,6 +173,13 @@ const handleBookingCreation = (req: express.Request, res: express.Response) => {
   if (booking.status === 'CHECKED_IN') {
     const table = dashboardData.tables.find((t) => t.tableNumber === booking.tableId);
     if (table) table.status = 'busy';
+  }
+
+  // Gửi email xác nhận đặt bàn qua SMTP hoặc ghi outbox
+  if (booking.email) {
+    sendBookingConfirmationEmail(booking).catch((err) => {
+      console.error('[Mailer] Background error sending confirmation email:', err);
+    });
   }
 
   res.status(201).json(booking);
@@ -475,6 +484,26 @@ app.post('/api/ai/dat-ban', handleBookingCreation);
 app.post('/api/config', (req, res) => {
   dashboardData.config = { ...dashboardData.config, ...req.body };
   res.json({ ok: true, message: 'Đã lưu cấu hình thành công.', config: dashboardData.config });
+});
+
+// ==========================================
+// 10. SYSTEM STATUS & EMAIL OUTBOX ENDPOINTS
+// ==========================================
+app.get('/api/system/status', (_req, res) => {
+  res.json({
+    dbConnected: isDbConnected(),
+    dbType: 'Microsoft SQL Server (T-SQL)',
+    smtpHost: process.env.SMTP_HOST || 'smtp.gmail.com',
+    smtpConfigured: Boolean(process.env.SMTP_USER && process.env.SMTP_PASS),
+    serverTime: new Date().toISOString(),
+  });
+});
+
+app.get('/api/system/emails', (_req, res) => {
+  res.json({
+    total: getEmailLogs().length,
+    outbox: getEmailLogs(),
+  });
 });
 
 export default app;
