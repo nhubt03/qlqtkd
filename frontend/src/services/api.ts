@@ -109,3 +109,29 @@ export async function registerUser(input: {
   const { data } = await api.post('/dang-ky', input);
   return data;
 }
+
+export async function activateMember(input: {
+  customerName: string;
+  phone: string;
+  email?: string;
+  packageId: string;
+  staffName?: string;
+}): Promise<any> {
+  const { data } = await api.post('/members/activate', input);
+  return data;
+}
+
+export async function createStaffAccount(input: {
+  name: string;
+  phone: string;
+  email: string;
+  password: string;
+}): Promise<any> {
+  const { data } = await api.post('/staff', input);
+  return data;
+}
+
+export async function fetchStaffList(): Promise<User[]> {
+  const { data } = await api.get<User[]>('/staff');
+  return data;
+}

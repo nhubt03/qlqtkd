@@ -496,6 +496,129 @@ app.post('/api/classes/:id/reject', (req, res) => {
 app.get('/api/members', (_req, res) => res.json(dashboardData.members));
 app.get('/api/khach-thang', (_req, res) => res.json(dashboardData.members));
 
+// Đăng ký / Kích hoạt gói tháng mới cho khách hàng (Quản lý hoặc Nhân viên thực hiện tại quầy)
+const handleActivateMember = (req: express.Request, res: express.Response) => {
+  const { customerName, phone, email, packageId, staffName } = req.body ?? {};
+  if (!customerName || !phone) {
+    return res.status(400).json({ message: 'Vui lòng nhập đầy đủ họ tên và số điện thoại của khách hàng.' });
+  }
+
+  const selectedPackage = String(packageId || 'p1');
+  const packConfig: Record<string, { months: number; price: number; turns: number; name: string }> = {
+    p1: { months: 1, price: 449000, turns: 30, name: 'Gói 1 tháng' },
+    p3: { months: 3, price: 1149000, turns: 90, name: 'Gói 3 tháng' },
+    p6: { months: 6, price: 1999000, turns: 180, name: 'Gói 6 tháng' },
+  };
+  const pack = packConfig[selectedPackage] || packConfig['p1'];
+
+  const cleanPhone = String(phone).trim();
+  const cleanEmail = String(email || '').trim().toLowerCase();
+
+  // Kiểm tra nếu khách đã có gói tháng đang hoạt động
+  const existingMember = dashboardData.members.find(
+    (m) => m.phone === cleanPhone || (cleanEmail && m.email === cleanEmail)
+  );
+
+  if (existingMember && existingMember.status === 'active' && existingMember.totalTurns - existingMember.usedTurns > 0) {
+    return res.status(400).json({
+      message: `Khách hàng ${existingMember.name} (${existingMember.phone}) hiện đang có gói tháng còn ${existingMember.totalTurns - existingMember.usedTurns} lượt chơi. Vui lòng sử dụng chức năng "Gia hạn gói" để cộng dồn lượt!`,
+    });
+  }
+
+  const newMemberId = dashboardData.members.length > 0 ? Math.max(...dashboardData.members.map((m) => m.id)) + 1 : 1;
+  const newMember = {
+    id: newMemberId,
+    name: String(customerName).trim(),
+    phone: cleanPhone,
+    email: cleanEmail,
+    packageType: selectedPackage,
+    startDate: new Date().toISOString(),
+    endDate: new Date(Date.now() + pack.months * 30 * 86400000).toISOString(),
+    totalTurns: pack.turns,
+    usedTurns: 0,
+    status: 'active' as const,
+  };
+
+  dashboardData.members.push(newMember);
+
+  // Tự động tìm và nâng cấp tài khoản người dùng thành MEMBER
+  const matchedUser = dashboardData.users.find(
+    (u) => (cleanEmail && u.email.toLowerCase() === cleanEmail) || u.phone === cleanPhone
+  );
+  if (matchedUser) {
+    matchedUser.role = 'MEMBER';
+    matchedUser.memberId = newMemberId;
+  }
+
+  // Ghi nhận thanh toán tiền gói vào hệ thống
+  dashboardData.payments.push({
+    id: dashboardData.payments.length + 1,
+    type: 'goi',
+    amount: pack.price,
+    reference: `Đăng ký mới ${pack.name} · ${newMember.name} (${newMember.phone})`,
+    who: String(staffName || 'Nhân viên quầy'),
+    createdAt: new Date().toISOString(),
+  });
+
+  res.status(201).json({
+    ok: true,
+    message: `Kích hoạt thành công ${pack.name} cho khách hàng ${newMember.name}! Đã nạp ${pack.turns} lượt chơi vào thẻ hội viên.`,
+    member: newMember,
+    upgradedUser: matchedUser ? { name: matchedUser.name, email: matchedUser.email, role: matchedUser.role } : null,
+  });
+};
+
+app.post('/api/members/activate', handleActivateMember);
+app.post('/api/members', handleActivateMember);
+app.post('/api/khach-thang/dang-ky', handleActivateMember);
+
+// Cấp tài khoản Nhân viên (STAFF) do Quản trị viên thực hiện
+const handleCreateStaff = (req: express.Request, res: express.Response) => {
+  const { name, phone, email, password } = req.body ?? {};
+  if (!name || !phone || !email || !password) {
+    return res.status(400).json({ message: 'Vui lòng điền đầy đủ họ tên, số điện thoại, email và mật khẩu của nhân viên.' });
+  }
+
+  const cleanEmail = String(email).trim().toLowerCase();
+  const cleanPhone = String(phone).trim();
+
+  // Kiểm tra trùng lặp email hoặc số điện thoại
+  const isDuplicate = dashboardData.users.some(
+    (u) => u.email.toLowerCase() === cleanEmail || u.phone === cleanPhone
+  );
+  if (isDuplicate) {
+    return res.status(400).json({ message: 'Email hoặc số điện thoại này đã được sử dụng trong hệ thống.' });
+  }
+
+  const newUserId = dashboardData.users.length > 0 ? Math.max(...dashboardData.users.map((u) => u.id)) + 1 : 1;
+  const newStaff = {
+    id: newUserId,
+    name: String(name).trim(),
+    phone: cleanPhone,
+    email: cleanEmail,
+    password: String(password).trim(),
+    role: 'STAFF' as const,
+  };
+
+  dashboardData.users.push(newStaff);
+
+  const { password: _p, ...safeStaff } = newStaff;
+  res.status(201).json({
+    ok: true,
+    message: `Đã cấp thành công tài khoản Nhân viên cho ${newStaff.name} với email ${newStaff.email}!`,
+    user: safeStaff,
+  });
+};
+
+app.post('/api/staff', handleCreateStaff);
+app.post('/api/users/staff', handleCreateStaff);
+app.get('/api/staff', (_req, res) => {
+  const staffList = dashboardData.users
+    .filter((u) => u.role === 'STAFF')
+    .map(({ password: _p, ...safeUser }) => safeUser);
+  res.json(staffList);
+});
+
 const handleRenewMember = (req: express.Request, res: express.Response) => {
   const id = Number(req.params.id);
   const { packageId, goi_id } = req.body ?? {};

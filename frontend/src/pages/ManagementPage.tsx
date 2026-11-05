@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { DashboardResponse, Member, User } from '../types';
 import type { PageId } from '../components/layout/Shell';
-import { approveClass, rejectClass, renewMember, updateConfig } from '../services/api';
+import { approveClass, rejectClass, renewMember, updateConfig, activateMember, createStaffAccount } from '../services/api';
 
 const packages = [
   { id: 'p1', name: 'Gói 1 tháng', months: 1, price: 449000 },
@@ -23,7 +23,7 @@ export function ManagementPage({ page, dashboard, user, onNotify, onOpenModal }:
   if (page === 'goi') return <PackagesPage config={dashboard.config} />;
   if (page === 'hv') return <MemberHome member={dashboard.members.find((member) => member.id === user.memberId)} config={dashboard.config} />;
   if (page === 'lop') return <ClassesPage dashboard={dashboard} onNotify={onNotify} />;
-  if (page === 'khach') return <MembersPage members={dashboard.members} onNotify={onNotify} />;
+  if (page === 'khach') return <MembersPage members={dashboard.members} user={user} onNotify={onNotify} />;
   if (page === 'doanh') return <StatisticsPage dashboard={dashboard} canSeeForecast={user.role === 'MANAGER'} onNotify={onNotify} />;
   return <SettingsPage dashboard={dashboard} user={user} onNotify={onNotify} />;
 }
@@ -226,12 +226,19 @@ function ClassesPage({ dashboard, onNotify }: { dashboard: DashboardResponse; on
   );
 }
 
-function MembersPage({ members, onNotify }: { members: Member[]; onNotify: (message: string) => void }) {
+function MembersPage({ members, user, onNotify }: { members: Member[]; user: User; onNotify: (message: string) => void }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [renewingMember, setRenewingMember] = useState<Member | null>(null);
   const [selectedPackId, setSelectedPackId] = useState('p1');
   const [submitting, setSubmitting] = useState(false);
+
+  // Form kích hoạt gói mới tại quầy
+  const [showActivateModal, setShowActivateModal] = useState(false);
+  const [custName, setCustName] = useState('');
+  const [custPhone, setCustPhone] = useState('');
+  const [custEmail, setCustEmail] = useState('');
+  const [custPackage, setCustPackage] = useState('p1');
 
   const filtered = useMemo(() => members.filter((member) => {
     const left = member.totalTurns - member.usedTurns;
@@ -260,18 +267,137 @@ function MembersPage({ members, onNotify }: { members: Member[]; onNotify: (mess
     }
   };
 
+  const handleActivateNew = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!custName.trim() || !custPhone.trim()) {
+      onNotify('Vui lòng nhập đầy đủ họ tên và số điện thoại của khách hàng.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await activateMember({
+        customerName: custName.trim(),
+        phone: custPhone.trim(),
+        email: custEmail.trim(),
+        packageId: custPackage,
+        staffName: user.name,
+      });
+
+      if (res.ok && res.member) {
+        members.push(res.member);
+        onNotify(res.message || `Kích hoạt thành công gói cước cho ${custName}!`);
+        setCustName('');
+        setCustPhone('');
+        setCustEmail('');
+        setCustPackage('p1');
+        setShowActivateModal(false);
+      }
+    } catch (err: any) {
+      onNotify(err?.response?.data?.message || 'Lỗi khi kích hoạt gói tháng cho khách.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const selectedPack = packages.find((p) => p.id === selectedPackId);
+  const newPackChoice = packages.find((p) => p.id === custPackage);
   const leftTurns = renewingMember ? Math.max(0, renewingMember.totalTurns - renewingMember.usedTurns) : 0;
   const turnsAfterRenew = leftTurns + (selectedPack ? selectedPack.months * 30 : 30);
 
   return (
     <>
-      <div className="pg-h">
+      <div className="pg-h" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h2>Khách tháng</h2>
-          <p>Danh sách khách tháng, gói đã đăng ký và lượt còn lại. Còn 5 lượt trở xuống hệ thống cảnh báo và hiện nút gia hạn.</p>
+          <h2>Khách tháng & Hội viên</h2>
+          <p>Quản lý danh sách hội viên, đăng ký kích hoạt gói tháng mới và theo dõi lượt chơi.</p>
         </div>
+        <button
+          className="btn"
+          style={{ background: '#16a34a', color: '#fff', fontWeight: 'bold' }}
+          type="button"
+          onClick={() => {
+            setShowActivateModal(!showActivateModal);
+            setRenewingMember(null);
+          }}
+        >
+          {showActivateModal ? 'Đóng form' : '+ Kích hoạt gói tháng cho khách'}
+        </button>
       </div>
+
+      {/* FORM KÍCH HOẠT GÓI THÁNG MỚI TẠI QUẦY */}
+      {showActivateModal && (
+        <div className="card" style={{ border: '2px solid #16a34a', marginBottom: 16, background: '#f0fdf4' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ color: '#166534', margin: 0 }}>Kích hoạt thẻ Hội viên (MEMBER) & Nạp gói tháng tại quầy</h3>
+            <span className="tag t-ok">Thanh toán tại quầy</span>
+          </div>
+          <p className="hint" style={{ marginTop: 4 }}>
+            Nhân viên/Quản lý thu tiền gói tháng của khách. Hệ thống sẽ tự động cấp số lượt chơi tương ứng và nâng cấp tài khoản của khách thành <b>MEMBER</b>.
+          </p>
+          <form onSubmit={handleActivateNew} style={{ marginTop: 12 }}>
+            <div className="fg">
+              <div>
+                <label>Họ và tên khách hàng *</label>
+                <input
+                  className="in"
+                  placeholder="Ví dụ: Hoàng Minh Quân"
+                  value={custName}
+                  onChange={(e) => setCustName(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label>Số điện thoại khách hàng *</label>
+                <input
+                  className="in"
+                  placeholder="09xx xxx xxx"
+                  value={custPhone}
+                  onChange={(e) => setCustPhone(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label>Địa chỉ Email (Để nâng cấp tài khoản)</label>
+                <input
+                  className="in"
+                  type="email"
+                  placeholder="khachhang@gmail.com"
+                  value={custEmail}
+                  onChange={(e) => setCustEmail(e.target.value)}
+                />
+              </div>
+              <div>
+                <label>Chọn gói tháng đăng ký</label>
+                <select className="in" value={custPackage} onChange={(e) => setCustPackage(e.target.value)}>
+                  {packages.map((pack) => (
+                    <option key={pack.id} value={pack.id}>
+                      {pack.name} ({pack.months * 30} lượt / {pack.months * 30} ngày) - {money(pack.price)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="full" style={{ background: '#dcfce7', padding: '10px 14px', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <span style={{ fontSize: 13, color: '#166534' }}>Số tiền thu của khách:</span>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: '#15803d' }}>{money(newPackChoice?.price ?? 449000)}</div>
+                </div>
+                <div style={{ textAlign: 'right', fontSize: 13, color: '#166534' }}>
+                  Số lượt nạp vào tài khoản: <b>{(newPackChoice?.months ?? 1) * 30} lượt chơi</b>
+                </div>
+              </div>
+              <div className="full" style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <button className="btn" type="submit" disabled={submitting} style={{ background: '#16a34a', color: '#fff', fontWeight: 'bold' }}>
+                  {submitting ? 'Đang kích hoạt...' : `Xác nhận thu tiền & Kích hoạt thẻ hội viên`}
+                </button>
+                <button className="btn ghost" type="button" onClick={() => setShowActivateModal(false)}>
+                  Hủy bỏ
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
 
       {renewingMember && (
         <div className="card" style={{ border: '2px solid var(--brand)', marginBottom: 16 }}>
@@ -719,6 +845,11 @@ function SettingsPage({ dashboard, user, onNotify }: { dashboard: DashboardRespo
         </section>
       </div>
 
+      {/* QUẢN LÝ VÀ CẤP TÀI KHOẢN NHÂN VIÊN (STAFF) - CHỈ QUẢN TRỊ VIÊN (MANAGER) MỚI CÓ QUYỀN */}
+      {user.role === 'MANAGER' && (
+        <StaffManagementSection dashboard={dashboard} onNotify={onNotify} />
+      )}
+
       {/* Nhật ký thao tác */}
       <section className="card" style={{ marginTop: 16 }}>
         <h3>Nhật ký thao tác & Chỉnh sửa cấu hình</h3>
@@ -785,5 +916,135 @@ function SettingsPage({ dashboard, user, onNotify }: { dashboard: DashboardRespo
         </div>
       </section>
     </>
+  );
+}
+
+function StaffManagementSection({ dashboard, onNotify }: { dashboard: DashboardResponse; onNotify: (msg: string) => void }) {
+  const [staffList, setStaffList] = useState<User[]>(() => dashboard.users.filter((u) => u.role === 'STAFF'));
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('123456');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleCreateStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !phone.trim() || !email.trim() || !password.trim()) {
+      onNotify('Vui lòng điền đầy đủ họ tên, số điện thoại, email và mật khẩu của nhân viên.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await createStaffAccount({
+        name: name.trim(),
+        phone: phone.trim(),
+        email: email.trim(),
+        password: password.trim(),
+      });
+
+      if (res.ok && res.user) {
+        dashboard.users.push(res.user);
+        setStaffList((prev) => [...prev, res.user]);
+        onNotify(res.message || `Đã cấp tài khoản Nhân viên thành công cho ${name}!`);
+        setName('');
+        setPhone('');
+        setEmail('');
+        setPassword('123456');
+        setShowAddForm(false);
+      }
+    } catch (err: any) {
+      onNotify(err?.response?.data?.message || 'Lỗi khi cấp tài khoản nhân viên.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section className="card" style={{ marginTop: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <h3>Quản lý & Cấp tài khoản Nhân viên (STAFF)</h3>
+          <p className="hint" style={{ marginTop: 2 }}>
+            Chỉ Quản trị viên (Admin) mới có quyền cấp phát tài khoản nhân viên làm việc tại quầy và sân CLB.
+          </p>
+        </div>
+        <button
+          className="btn"
+          style={{ background: '#0284c7', color: '#fff', fontWeight: 'bold' }}
+          type="button"
+          onClick={() => setShowAddForm(!showAddForm)}
+        >
+          {showAddForm ? 'Đóng form' : '+ Cấp tài khoản Nhân viên mới'}
+        </button>
+      </div>
+
+      {showAddForm && (
+        <form onSubmit={handleCreateStaff} style={{ marginTop: 14, background: '#f0f9ff', padding: 16, borderRadius: 8, border: '1px solid #bae6fd' }}>
+          <h4 style={{ margin: '0 0 10px', color: '#0369a1' }}>Điền thông tin nhân viên mới</h4>
+          <div className="fg">
+            <div>
+              <label>Họ và tên nhân viên *</label>
+              <input className="in" placeholder="Ví dụ: Lê Thị Thảo" value={name} onChange={(e) => setName(e.target.value)} required />
+            </div>
+            <div>
+              <label>Số điện thoại *</label>
+              <input className="in" placeholder="09xx xxx xxx" value={phone} onChange={(e) => setPhone(e.target.value)} required />
+            </div>
+            <div>
+              <label>Email đăng nhập (Duy nhất) *</label>
+              <input className="in" type="email" placeholder="nhanvien.thao@pingpongbros.vn" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            </div>
+            <div>
+              <label>Mật khẩu khởi tạo *</label>
+              <input className="in" type="text" placeholder="123456" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            </div>
+            <div className="full" style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <button className="btn" type="submit" disabled={submitting} style={{ background: '#0284c7', color: '#fff', fontWeight: 'bold' }}>
+                {submitting ? 'Đang khởi tạo...' : 'Xác nhận cấp tài khoản Nhân viên'}
+              </button>
+              <button className="btn ghost" type="button" onClick={() => setShowAddForm(false)}>
+                Hủy bỏ
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+
+      <div className="ovf" style={{ marginTop: 14 }}>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Họ và tên</th>
+              <th>Số điện thoại</th>
+              <th>Email đăng nhập</th>
+              <th>Vai trò</th>
+              <th>Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody>
+            {staffList.map((st) => (
+              <tr key={st.id}>
+                <td className="num">#{st.id}</td>
+                <td><b>{st.name}</b></td>
+                <td>{st.phone}</td>
+                <td><span className="tag t-bl">{st.email}</span></td>
+                <td><span className="tag t-ok">STAFF (Nhân viên)</span></td>
+                <td><span style={{ color: '#16a34a', fontWeight: 'bold' }}>● Đang làm việc</span></td>
+              </tr>
+            ))}
+            {staffList.length === 0 && (
+              <tr>
+                <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)', padding: '16px' }}>
+                  Chưa có tài khoản nhân viên nào được tạo. Hãy bấm <b>"+ Cấp tài khoản Nhân viên mới"</b> ở trên để tạo.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
