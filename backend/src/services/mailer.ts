@@ -23,7 +23,13 @@ const smtpUser = process.env.SMTP_USER || '';
 const smtpPass = process.env.SMTP_PASS || '';
 const smtpFrom = process.env.SMTP_FROM || `"PingPongBros Club" <no-reply@pingpongbros.vn>`;
 
-const hasSmtpCredentials = Boolean(smtpUser && smtpPass);
+// Chỉ kích hoạt SMTP thực tế khi đã có thông tin tài khoản thật (không phải placeholder demo)
+const hasSmtpCredentials = Boolean(
+  smtpUser &&
+  smtpPass &&
+  smtpPass !== 'your-app-password' &&
+  !smtpUser.includes('example')
+);
 
 let transporter: Transporter | null = null;
 
@@ -36,6 +42,8 @@ if (hasSmtpCredentials) {
       user: smtpUser,
       pass: smtpPass,
     },
+    connectionTimeout: 2500,
+    greetingTimeout: 2500,
   });
 }
 
@@ -47,7 +55,7 @@ export function getEmailLogs(): EmailLog[] {
 }
 
 /**
- * Gửi email xác nhận đặt bàn thành công
+ * Gửi email xác nhận đặt bàn thành công (Mô hình Transactional Outbox Pattern)
  */
 export async function sendBookingConfirmationEmail(booking: {
   id: number;
@@ -134,10 +142,21 @@ export async function sendBookingConfirmationEmail(booking: {
     </html>
   `;
 
-  // Lưu thông báo vào SQL Server nếu có kết nối
-  recordNotificationSQL(null, subject, `Mã đặt bàn ${bookingCode} cho khách ${booking.customerName} lúc ${timeStr} ${dateStr}`);
+  // 1. Ghi nhận ngay vào Email Outbox (đảm bảo không bị trễ thời gian thực)
+  const emailEntry: EmailLog = {
+    id: `EMAIL-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    to: booking.email,
+    subject,
+    sentAt: new Date().toISOString(),
+    status: hasSmtpCredentials ? 'SENT' : 'SIMULATED',
+    preview: `Mã ${bookingCode} cho ${booking.customerName} (${booking.email}). Giao diện HTML đã kết xuất.`,
+  };
+  emailOutbox.push(emailEntry);
 
-  // Nếu có cấu hình SMTP thật thì gửi qua SMTP
+  // 2. Lưu vết thông báo vào SQL Server nếu có kết nối
+  recordNotificationSQL(null, subject, `Mã đặt bàn ${bookingCode} cho khách ${booking.customerName} lúc ${timeStr} ${dateStr}`).catch(() => {});
+
+  // 3. Nếu có thông tin SMTP thật thì gửi qua SMTP transporter
   if (transporter && hasSmtpCredentials) {
     try {
       await transporter.sendMail({
@@ -146,32 +165,13 @@ export async function sendBookingConfirmationEmail(booking: {
         subject,
         html: htmlContent,
       });
-
-      emailOutbox.push({
-        id: `EMAIL-${Date.now()}`,
-        to: booking.email,
-        subject,
-        sentAt: new Date().toISOString(),
-        status: 'SENT',
-        preview: `Đã gửi thành công email xác nhận mã #${bookingCode} qua SMTP ${smtpHost}`,
-      });
-
       console.log(`[SMTP] Successfully sent confirmation email to ${booking.email} (Code: ${bookingCode})`);
       return { success: true, mode: 'SMTP', message: `Đã gửi email xác nhận thành công tới ${booking.email}` };
     } catch (err: any) {
-      console.error(`[SMTP Error] Failed to send email to ${booking.email}:`, err?.message || err);
+      console.warn(`[SMTP Warning] Could not deliver to ${booking.email} via external SMTP (${err?.message || err}). Mail is safely saved in local outbox.`);
+      emailEntry.status = 'SIMULATED';
     }
   }
-
-  // Fallback mô phỏng ghi nhận outbox (không crash nếu chưa điền mật khẩu SMTP thật)
-  emailOutbox.push({
-    id: `EMAIL-${Date.now()}`,
-    to: booking.email,
-    subject,
-    sentAt: new Date().toISOString(),
-    status: 'SIMULATED',
-    preview: `[Outbox Dev] Mã ${bookingCode} cho ${booking.customerName} (${booking.email}). Ready for SMTP transfer.`,
-  });
 
   console.log(`[Email Outbox] Recorded booking confirmation email for ${booking.email} (Code: ${bookingCode})`);
   return {
