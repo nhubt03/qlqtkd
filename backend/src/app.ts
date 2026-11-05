@@ -878,7 +878,7 @@ app.post('/api/config', (req, res) => {
 app.get('/api/system/status', (_req, res) => {
   res.json({
     dbConnected: isDbConnected(),
-    dbType: 'Microsoft SQL Server (T-SQL)',
+    dbType: (process.env.DATABASE_URL || '').startsWith('postgres') ? 'Supabase (PostgreSQL)' : 'Microsoft SQL Server (T-SQL)',
     smtpHost: process.env.SMTP_HOST || 'smtp.gmail.com',
     smtpConfigured: Boolean(process.env.SMTP_USER && process.env.SMTP_PASS),
     serverTime: new Date().toISOString(),

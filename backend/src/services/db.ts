@@ -1,7 +1,11 @@
 import sql from 'mssql';
+import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+export const prisma = new PrismaClient();
+let isPrismaConnected = false;
 
 export interface SqlConfig {
   server: string;
@@ -30,6 +34,27 @@ let pool: sql.ConnectionPool | null = null;
 let isConnected = false;
 
 export async function initDatabase(): Promise<boolean> {
+  const dbUrl = process.env.DATABASE_URL || '';
+
+  // 1. Kiểm tra kết nối Supabase (PostgreSQL) qua Prisma
+  if (dbUrl.startsWith('postgres://') || dbUrl.startsWith('postgresql://')) {
+    try {
+      console.log('[Supabase / PostgreSQL] Connecting to cloud database via Prisma...');
+      await prisma.$connect();
+      isPrismaConnected = true;
+      isConnected = true;
+      console.log('[Supabase / PostgreSQL] Connected successfully to Supabase Database!');
+      return true;
+    } catch (err: any) {
+      isPrismaConnected = false;
+      isConnected = false;
+      console.warn(`[Supabase / PostgreSQL] Could not connect: ${err?.message || err}`);
+      console.warn(`[Storage] System running in resilient mode with persistent store.json.`);
+      return false;
+    }
+  }
+
+  // 2. Kiểm tra kết nối Microsoft SQL Server
   try {
     console.log(`[SQL Server] Connecting to ${config.server}:${config.port}/${config.database}...`);
     pool = await new sql.ConnectionPool(config).connect();
@@ -45,7 +70,7 @@ export async function initDatabase(): Promise<boolean> {
 }
 
 export function isDbConnected(): boolean {
-  return isConnected;
+  return isConnected || isPrismaConnected;
 }
 
 export function getDbPool(): sql.ConnectionPool | null {
