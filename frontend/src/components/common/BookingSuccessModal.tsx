@@ -22,20 +22,35 @@ interface BookingSuccessModalProps {
 export function BookingSuccessModal({ info, onClose }: BookingSuccessModalProps) {
   const code = `PB-${String(info.bookingId).padStart(4, '0')}`;
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [copied, setCopied] = useState<boolean>(false);
 
-  // Sinh mã QR thật chuẩn ISO/IEC 18004 để camera/máy quét Zalo, iPhone, Android có thể quét được 100%
+  // Nội dung đầy đủ chi tiết đặt bàn hiển thị khi quét mã QR
+  const fullBookingDetails = [
+    `🏓 CLB BÓNG BÀN PINGPONGBROS`,
+    `--------------------------------`,
+    `• Mã đặt bàn: ${code}`,
+    `• Bàn số: Bàn ${info.tableNumber}`,
+    `• Khách hàng: ${info.customerName}`,
+    `• Số điện thoại: ${info.phone}`,
+    `• Thời gian hẹn: ${info.startTime} (Ngày ${info.date})`,
+    `• Thời lượng: ${info.duration} giờ (${info.people} người)`,
+    `• Hình thức: ${info.isMember ? 'Trừ lượt gói hội viên' : `${info.amount.toLocaleString('vi-VN')} VNĐ`}`,
+    `--------------------------------`,
+    `⚠️ Lưu ý: Quý khách vui lòng đến đúng giờ. Hệ thống giữ bàn tối đa 15 phút.`,
+  ].join('\n');
+
+  // Sinh mã QR thật chuẩn ISO/IEC 18004 chứa trọn vẹn thông tin đặt bàn
   useEffect(() => {
     let isMounted = true;
-    const qrPayload = code; // Quét sẽ ra ngay mã check-in PB-XXXX
 
-    QRCode.toDataURL(qrPayload, {
-      width: 200,
+    QRCode.toDataURL(fullBookingDetails, {
+      width: 240,
       margin: 1,
       color: {
         dark: '#111111',
         light: '#ffffff',
       },
-      errorCorrectionLevel: 'M',
+      errorCorrectionLevel: 'L', // Dùng level L cho payload nhiều text để các ô pixel to, quét cực nhanh
     })
       .then((url) => {
         if (isMounted) setQrDataUrl(url);
@@ -47,7 +62,14 @@ export function BookingSuccessModal({ info, onClose }: BookingSuccessModalProps)
     return () => {
       isMounted = false;
     };
-  }, [code]);
+  }, [fullBookingDetails]);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(fullBookingDetails).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  };
 
   return (
     <div className="backdrop" role="presentation" onClick={onClose}>
@@ -57,7 +79,7 @@ export function BookingSuccessModal({ info, onClose }: BookingSuccessModalProps)
         aria-modal="true"
         aria-labelledby="booking-success-title"
         onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: 460, textAlign: 'center', padding: '24px 20px' }}
+        style={{ maxWidth: 480, textAlign: 'center', padding: '24px 20px', maxHeight: '90vh', overflowY: 'auto' }}
       >
         <div
           style={{
@@ -80,7 +102,7 @@ export function BookingSuccessModal({ info, onClose }: BookingSuccessModalProps)
           Đặt bàn thành công!
         </h2>
         <p className="hint" style={{ fontSize: 13, marginBottom: 16 }}>
-          Vui lòng cung cấp mã bàn hoặc đưa mã QR này cho nhân viên quầy khi đến sân để check-in.
+          Dùng <b>Camera điện thoại</b> hoặc <b>Zalo</b> quét mã QR dưới đây để xem ngay toàn bộ thông tin đặt bàn.
         </p>
 
         {/* Khung hiển thị Mã bàn & QR thật */}
@@ -116,22 +138,22 @@ export function BookingSuccessModal({ info, onClose }: BookingSuccessModalProps)
             {qrDataUrl ? (
               <img
                 src={qrDataUrl}
-                alt={`Mã QR Check-in ${code}`}
+                alt={`Mã QR Thông tin đặt bàn ${code}`}
                 style={{
-                  width: 150,
-                  height: 150,
+                  width: 180,
+                  height: 180,
                   background: '#fff',
                   padding: 8,
                   borderRadius: 8,
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+                  boxShadow: '0 2px 10px rgba(0,0,0,0.12)',
                   objectFit: 'contain',
                 }}
               />
             ) : (
               <div
                 style={{
-                  width: 150,
-                  height: 150,
+                  width: 180,
+                  height: 180,
                   background: '#f0f0f0',
                   borderRadius: 8,
                   display: 'flex',
@@ -145,8 +167,8 @@ export function BookingSuccessModal({ info, onClose }: BookingSuccessModalProps)
               </div>
             )}
           </div>
-          <small className="hint" style={{ display: 'block', marginTop: 8, fontSize: 11 }}>
-            📱 Quét bằng Camera / Zalo / App ngân hàng để lấy mã check-in
+          <small className="hint" style={{ display: 'block', marginTop: 8, fontSize: 12, color: '#1a5276', fontWeight: 500 }}>
+            📲 Quét mã để xem ngay trọn vẹn thông tin đặt bàn trên điện thoại
           </small>
         </div>
 
@@ -158,7 +180,7 @@ export function BookingSuccessModal({ info, onClose }: BookingSuccessModalProps)
             background: '#fff',
             border: '1px solid #e0e0e0',
             borderRadius: 8,
-            padding: '10px 14px',
+            padding: '12px 14px',
             marginBottom: 14,
           }}
         >
@@ -196,21 +218,31 @@ export function BookingSuccessModal({ info, onClose }: BookingSuccessModalProps)
             borderRadius: 6,
             fontSize: 12,
             color: '#7d6608',
-            marginBottom: 16,
+            marginBottom: 14,
           }}
         >
           ⏱️ <b>Quy định giữ bàn:</b> Sân giữ bàn tối đa <b>15 phút</b> kể từ giờ đặt ({info.startTime}). Quá hạn bàn
           sẽ tự động được giải phóng cho khách chờ.
         </div>
 
-        <button
-          className="btn red"
-          type="button"
-          style={{ width: '100%', padding: '10px 0', fontSize: 15 }}
-          onClick={onClose}
-        >
-          Tôi đã ghi nhớ mã (Đóng)
-        </button>
+        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+          <button
+            className="btn ghost"
+            type="button"
+            style={{ flex: 1, padding: '10px 0', fontSize: 13 }}
+            onClick={handleCopy}
+          >
+            {copied ? '✓ Đã sao chép!' : '📋 Sao chép thông tin'}
+          </button>
+          <button
+            className="btn red"
+            type="button"
+            style={{ flex: 1, padding: '10px 0', fontSize: 14 }}
+            onClick={onClose}
+          >
+            Đóng
+          </button>
+        </div>
       </div>
     </div>
   );
