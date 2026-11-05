@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { DashboardResponse, Member, User } from '../types';
 import type { PageId } from '../components/layout/Shell';
+import { renewMember } from '../services/api';
 
 const packages = [
   { id: 'p1', name: 'Gói 1 tháng', months: 1, price: 449000 },
@@ -22,7 +23,7 @@ export function ManagementPage({ page, dashboard, user, onNotify, onOpenModal }:
   if (page === 'goi') return <PackagesPage config={dashboard.config} />;
   if (page === 'hv') return <MemberHome member={dashboard.members.find((member) => member.id === user.memberId)} config={dashboard.config} />;
   if (page === 'lop') return <ClassesPage dashboard={dashboard} onNotify={onNotify} />;
-  if (page === 'khach') return <MembersPage members={dashboard.members} onOpenModal={onOpenModal} />;
+  if (page === 'khach') return <MembersPage members={dashboard.members} onNotify={onNotify} />;
   if (page === 'doanh') return <StatisticsPage dashboard={dashboard} canSeeForecast={user.role === 'MANAGER'} onNotify={onNotify} />;
   return <SettingsPage dashboard={dashboard} onNotify={onNotify} />;
 }
@@ -91,18 +92,88 @@ function ClassesPage({ dashboard, onNotify }: { dashboard: DashboardResponse; on
   );
 }
 
-function MembersPage({ members, onOpenModal }: { members: Member[]; onOpenModal: (title: string, content: string) => void }) {
+function MembersPage({ members, onNotify }: { members: Member[]; onNotify: (message: string) => void }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const [renewingMember, setRenewingMember] = useState<Member | null>(null);
+  const [selectedPackId, setSelectedPackId] = useState('p1');
+  const [submitting, setSubmitting] = useState(false);
+
   const filtered = useMemo(() => members.filter((member) => {
     const left = member.totalTurns - member.usedTurns;
     const status = new Date(member.endDate) < new Date() ? 'het_luot' : left === 0 ? 'het_luot' : left <= 5 ? 'sap_het' : 'con_luot';
     const matchSearch = `${member.name} ${member.phone} ${member.email}`.toLowerCase().includes(query.toLowerCase());
     return matchSearch && (filter === 'all' || filter === status);
   }), [members, query, filter]);
+
+  const handleRenew = async () => {
+    if (!renewingMember) return;
+    setSubmitting(true);
+    try {
+      await renewMember(renewingMember.id, selectedPackId);
+      const chosenPack = packages.find((p) => p.id === selectedPackId);
+      const turnsToAdd = (chosenPack?.months ?? 1) * 30;
+      const currentLeft = Math.max(0, renewingMember.totalTurns - renewingMember.usedTurns);
+      renewingMember.totalTurns += turnsToAdd;
+      renewingMember.packageType = selectedPackId;
+      renewingMember.status = 'active';
+      onNotify(`Gia hạn thành công ${chosenPack?.name} cho ${renewingMember.name}! Số lượt mới đã cộng dồn: ${currentLeft + turnsToAdd}/${renewingMember.totalTurns} lượt.`);
+      setRenewingMember(null);
+    } catch {
+      onNotify('Lỗi khi thực hiện gia hạn gói.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const selectedPack = packages.find((p) => p.id === selectedPackId);
+  const leftTurns = renewingMember ? Math.max(0, renewingMember.totalTurns - renewingMember.usedTurns) : 0;
+  const turnsAfterRenew = leftTurns + (selectedPack ? selectedPack.months * 30 : 30);
+
   return (
     <>
-      <div className="pg-h"><div><h2>Khách tháng</h2><p>Danh sách khách tháng, gói đã đăng ký và lượt còn lại. Còn 5 lượt trở xuống hệ thống cảnh báo và hiện nút gia hạn.</p></div><button className="btn red" type="button" onClick={() => onOpenModal('Đăng ký gói cho khách', 'Thao tác đăng ký/gia hạn chưa có endpoint trong API hiện tại.')}>Đăng ký gói cho khách</button></div>
+      <div className="pg-h">
+        <div>
+          <h2>Khách tháng</h2>
+          <p>Danh sách khách tháng, gói đã đăng ký và lượt còn lại. Còn 5 lượt trở xuống hệ thống cảnh báo và hiện nút gia hạn.</p>
+        </div>
+      </div>
+
+      {renewingMember && (
+        <div className="card" style={{ border: '2px solid var(--brand)', marginBottom: 16 }}>
+          <h3>Gia hạn gói cho hội viên: <u>{renewingMember.name}</u></h3>
+          <p className="hint" style={{ marginTop: 4 }}>
+            Quy tắc: Khi gia hạn, số lượt còn lại ({leftTurns} lượt) sẽ được <b>CỘNG DỒN</b> vào gói mới, không bị reset!
+          </p>
+          <div className="fg" style={{ marginTop: 12 }}>
+            <div>
+              <label>Chọn gói gia hạn</label>
+              <select className="in" value={selectedPackId} onChange={(e) => setSelectedPackId(e.target.value)}>
+                {packages.map((pack) => (
+                  <option key={pack.id} value={pack.id}>
+                    {pack.name} ({pack.months * 30} lượt - {money(pack.price)})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Dự kiến số lượt sau gia hạn</label>
+              <div className="in ro" style={{ fontWeight: 'bold', color: 'var(--brand)' }}>
+                {leftTurns} (hiện có) + {(selectedPack?.months ?? 1) * 30} (gói mới) = {turnsAfterRenew} lượt
+              </div>
+            </div>
+            <div className="full" style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <button className="btn red" type="button" onClick={handleRenew} disabled={submitting}>
+                {submitting ? 'Đang xử lý...' : `Xác nhận gia hạn (${money(selectedPack?.price ?? 0)})`}
+              </button>
+              <button className="btn ghost" type="button" onClick={() => setRenewingMember(null)}>
+                Hủy bỏ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <section className="card">
         <div className="fg" style={{ marginBottom: 12 }}>
           <div><label htmlFor="member-search">Tìm khách</label><input className="in" id="member-search" placeholder="Tên, SĐT hoặc email" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
@@ -119,11 +190,23 @@ function MembersPage({ members, onOpenModal }: { members: Member[]; onOpenModal:
               <td className="num">{dateText(member.startDate)}</td><td className="num">{dateText(member.endDate)}</td>
               <td style={{ minWidth: 130 }}><b className="num">{left} / {member.totalTurns}</b><div className={`bar ${left <= 5 ? 'low' : ''}`}><i style={{ width: `${member.totalTurns ? left / member.totalTurns * 100 : 0}%` }} /></div></td>
               <td><span className={`tag ${statusClass}`}>{left === 0 ? 'Hết lượt' : left <= 5 ? 'Sắp hết lượt' : 'Còn lượt'}</span></td>
-              <td><button className={`btn sm ${left <= 5 ? 'red' : 'ghost'}`} type="button" onClick={() => onOpenModal(`Gia hạn gói: ${member.name}`, `Hiện còn ${left} / ${member.totalTurns} lượt. Thao tác gia hạn chưa được kết nối với API.`)}>Gia hạn</button></td>
+              <td>
+                <button
+                  className={`btn sm ${left <= 5 ? 'red' : 'ghost'}`}
+                  type="button"
+                  title="Nhân viên chủ động hỗ trợ gia hạn gói"
+                  onClick={() => {
+                    setRenewingMember(member);
+                    setSelectedPackId(member.packageType || 'p1');
+                  }}
+                >
+                  Gia hạn
+                </button>
+              </td>
             </tr>;
           })}{!filtered.length && <tr><td colSpan={8}>Không có khách phù hợp.</td></tr>}</tbody>
         </table></div>
-        <p className="hint" style={{ marginTop: 10 }}>Gia hạn được cộng dồn vào số lượt đang có theo đặc tả nghiệp vụ.</p>
+        <p className="hint" style={{ marginTop: 10 }}>Gia hạn được cộng dồn vào số lượt đang có theo đúng đặc tả nghiệp vụ PingPongBros.</p>
       </section>
     </>
   );
