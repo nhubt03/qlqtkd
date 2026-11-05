@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { createBooking, fetchDashboard } from '../services/api';
+import { checkInBooking, checkOutBooking, createBooking, fetchDashboard } from '../services/api';
 import type { Booking, DashboardResponse, TableInfo, User } from '../types';
 import { venueNow } from '../utils/time';
 import { validateCustomerContact } from '../utils/validation';
@@ -94,6 +94,27 @@ export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPagePro
 
   const selected = data.tables.find((table) => table.tableNumber === selectedTable) ?? null;
 
+  const handleCheckIn = async (bookingId: number) => {
+    try {
+      await checkInBooking(bookingId);
+      await refresh();
+      onNotify('Check-in thành công cho lượt đặt #' + bookingId);
+    } catch {
+      onNotify('Lỗi khi thực hiện check-in.');
+    }
+  };
+
+  const handleCheckOut = async (bookingId: number) => {
+    try {
+      const res = await checkOutBooking(bookingId);
+      await refresh();
+      setSelectedTable(null);
+      onNotify(res.message || 'Check-out hoàn tất.');
+    } catch {
+      onNotify('Lỗi khi thực hiện check-out.');
+    }
+  };
+
   return (
     <>
       <div className="pg-h">
@@ -117,7 +138,7 @@ export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPagePro
             <span className={`tag ${live ? 't-ok' : 't-am'}`}>{live ? 'Thời gian thực' : `Đang xem ${time} · ${dateText(`${date}T00:00:00`)}`}</span>
             {' '}{live ? 'Bản đồ tự cập nhật theo dữ liệu hiện tại.' : 'Bấm "Bây giờ" để về thời gian thực.'}
           </p>
-          {isStaff && <StaffSearch value={search} onChange={setSearch} bookings={data.bookings} onSelect={(booking) => setSelectedTable(booking.tableId)} />}
+          {isStaff && <StaffSearch value={search} onChange={setSearch} bookings={data.bookings} onSelect={(booking) => setSelectedTable(booking.tableId)} onCheckIn={handleCheckIn} />}
           <label>Trạng thái sân</label>
           <div className="chips" role="group" aria-label="Lọc trạng thái">
             {([
@@ -156,7 +177,7 @@ export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPagePro
         <div className="col">
           <section className="card" aria-label={isStaff && selected ? 'Chi tiết bàn' : 'Đặt bàn'}>
             {isStaff && selected
-              ? <CourtDetail table={selected} status={getStatus(selected)} config={data.config} onBack={() => setSelectedTable(null)} />
+              ? <CourtDetail table={selected} status={getStatus(selected)} config={data.config} onBack={() => setSelectedTable(null)} onCheckIn={handleCheckIn} onCheckOut={handleCheckOut} />
               : user.role === 'TEACHER'
                 ? <ClassRequest config={data.config} onNotify={onNotify} />
                 : <BookingForm dashboard={data} user={user} onNotify={onNotify} onRefresh={refresh} />}
@@ -172,7 +193,7 @@ export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPagePro
   );
 }
 
-function CourtDetail({ table, status, config, onBack }: { table: TableInfo; status: CourtStatus; config: DashboardResponse['config']; onBack: () => void }) {
+function CourtDetail({ table, status, config, onBack, onCheckIn, onCheckOut }: { table: TableInfo; status: CourtStatus; config: DashboardResponse['config']; onBack: () => void; onCheckIn: (id: number) => void; onCheckOut: (id: number) => void }) {
   const booking = status.booking;
   return (
     <>
@@ -199,12 +220,25 @@ function CourtDetail({ table, status, config, onBack }: { table: TableInfo; stat
       ) : (
         <p className="hint" style={{ margin: '10px 0' }}>Ngoài giờ mở cửa ({String(config.openingHour).padStart(2, '0')}:00 – {String(config.closingHour).padStart(2, '0')}:00).</p>
       )}
-      <button className="btn ghost" style={{ width: '100%', marginTop: 12 }} type="button" onClick={onBack}>Về khung đặt bàn</button>
+
+      {/* Thao tác Check-in / Check-out trực tiếp trên màn hình sân */}
+      {booking && (booking.status === 'CHECKED_IN' || status.state === 'choi') && (
+        <button className="btn red" style={{ width: '100%', marginTop: 12 }} type="button" onClick={() => onCheckOut(booking.id)}>
+          Check-out và kết thúc lượt
+        </button>
+      )}
+      {booking && (booking.status === 'CONFIRMED' || booking.status === 'PENDING') && (
+        <button className="btn" style={{ width: '100%', marginTop: 12, background: 'var(--brand)' }} type="button" onClick={() => onCheckIn(booking.id)}>
+          Check-in nhận bàn
+        </button>
+      )}
+
+      <button className="btn ghost" style={{ width: '100%', marginTop: 8 }} type="button" onClick={onBack}>Về khung đặt bàn</button>
     </>
   );
 }
 
-function StaffSearch({ value, onChange, bookings, onSelect }: { value: string; onChange: (value: string) => void; bookings: Booking[]; onSelect: (booking: Booking) => void }) {
+function StaffSearch({ value, onChange, bookings, onSelect, onCheckIn }: { value: string; onChange: (value: string) => void; bookings: Booking[]; onSelect: (booking: Booking) => void; onCheckIn: (id: number) => void }) {
   const matches = bookings.filter((booking) => ['CONFIRMED', 'PENDING', 'CHECKED_IN'].includes(booking.status) && `${booking.customerName} ${booking.phone} ${booking.id}`.toLowerCase().includes(value.toLowerCase())).slice(0, 6);
   return (
     <>
@@ -213,7 +247,12 @@ function StaffSearch({ value, onChange, bookings, onSelect }: { value: string; o
       {value && <ul className="res-list">{matches.map((booking) => (
         <li key={booking.id}>
           <span><b>Bàn {booking.tableId}</b> · {booking.customerName}<br /><small className="hint">#{booking.id} · {booking.phone} · {timeText(new Date(booking.startTime))}</small></span>
-          <button className="btn sm" type="button" onClick={() => onSelect(booking)}>{booking.status === 'CHECKED_IN' ? 'Xem bàn' : 'Chi tiết'}</button>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {booking.status !== 'CHECKED_IN' && (
+              <button className="btn sm" type="button" onClick={() => onCheckIn(booking.id)}>Check-in</button>
+            )}
+            <button className="btn sm ghost" type="button" onClick={() => onSelect(booking)}>{booking.status === 'CHECKED_IN' ? 'Xem bàn' : 'Chi tiết'}</button>
+          </div>
         </li>
       ))}{!matches.length && <li><span className="hint">Không tìm thấy lượt đặt phù hợp.</span></li>}</ul>}
       <div style={{ height: 12 }} />
