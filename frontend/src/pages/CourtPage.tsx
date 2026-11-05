@@ -270,12 +270,48 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
   const [people, setPeople] = useState(2);
   const [submitting, setSubmitting] = useState(false);
   const [noTableWarning, setNoTableWarning] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const cost = people * duration * dashboard.config.courtPrice;
   const endTime = (() => {
     const [hour, minute] = startTime.split(':').map(Number);
     const total = hour * 60 + minute + duration * 60;
     return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
   })();
+
+  // AI-1: Đề xuất các khung giờ thay thế có bàn trống lân cận
+  const findAlternativeHours = (targetDate: string, targetTime: string, dur: number): string[] => {
+    const [targetH] = targetTime.split(':').map(Number);
+    const candidates = [targetH - 1, targetH + 1, targetH - 2, targetH + 2];
+    const availableHours: string[] = [];
+
+    for (const h of candidates) {
+      if (h >= dashboard.config.openingHour && h + dur <= dashboard.config.closingHour) {
+        const timeStr = `${String(h).padStart(2, '0')}:00`;
+        const checkTime = new Date(`${targetDate}T${timeStr}:00`);
+        const busyTableIds = new Set(
+          dashboard.bookings
+            .filter((b) => {
+              if (!['PENDING', 'CONFIRMED', 'CHECKED_IN'].includes(b.status)) return false;
+              const bStart = new Date(b.startTime);
+              const bEnd = new Date(bStart.getTime() + b.duration * 3600000);
+              const checkEnd = new Date(checkTime.getTime() + dur * 3600000);
+              return !(checkEnd <= bStart || checkTime >= bEnd);
+            })
+            .map((b) => b.tableId)
+        );
+
+        const hasAvailable = dashboard.tables.some((t) => {
+          if (t.zone === 'teaching' && h < dashboard.config.classCutoffHour) return false;
+          return !busyTableIds.has(t.tableNumber);
+        });
+
+        if (hasAvailable && !availableHours.includes(timeStr)) {
+          availableHours.push(timeStr);
+        }
+      }
+    }
+    return availableHours.slice(0, 3);
+  };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -304,6 +340,8 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
     });
 
     if (!availableTable) {
+      const suggestions = findAlternativeHours(bookingDate, startTime, duration);
+      setAiSuggestions(suggestions);
       setNoTableWarning(true);
       return;
     }
@@ -362,7 +400,29 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
       {noTableWarning && (
         <div className="alert" style={{ background: '#fdf2e9', borderColor: '#e08a3c', color: '#8a4b08', margin: '12px 0', padding: 12, borderRadius: 8 }}>
           <b>⚠️ Hiện tại khung giờ {startTime} ({bookingDate}) đã hết bàn trống!</b>
-          <p style={{ margin: '6px 0 10px', fontSize: 13 }}>Bạn có muốn thêm khách vào hàng chờ để tự động nhận bàn ngay khi có bàn trống không?</p>
+          {aiSuggestions.length > 0 && (
+            <div style={{ marginTop: 8, padding: '8px 10px', background: '#fff', borderRadius: 6, border: '1px dashed #e08a3c' }}>
+              <span style={{ fontSize: 13, fontWeight: 'bold', color: 'var(--brand)' }}>🤖 AI-1 Đề xuất khung giờ thay thế:</span>
+              <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                {aiSuggestions.map((sugg) => (
+                  <button
+                    key={sugg}
+                    type="button"
+                    className="btn sm"
+                    style={{ background: '#1d4ba8', color: '#fff', fontSize: 12 }}
+                    onClick={() => {
+                      setStartTime(sugg);
+                      setNoTableWarning(false);
+                      onNotify(`Đã chuyển sang khung giờ gợi ý của AI: ${sugg}. Bạn có thể bấm Đặt bàn.`);
+                    }}
+                  >
+                    Đổi sang {sugg}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <p style={{ margin: '8px 0 10px', fontSize: 13 }}>Hoặc thêm khách vào danh sách chờ để tự động nhận bàn ngay khi có bàn trống:</p>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn sm red" type="button" onClick={handleAddToWaitlist} disabled={submitting}>
               Thêm vào hàng chờ
