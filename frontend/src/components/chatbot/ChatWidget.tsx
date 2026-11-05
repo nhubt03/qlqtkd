@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { DashboardResponse, User } from '../../types';
 import type { PageId } from '../layout/Shell';
+import { createBooking } from '../../services/api';
+
+interface ExtractedBooking {
+  customerName: string;
+  people: number;
+  date: string;
+  time: string;
+  duration: number;
+  confidence: number;
+}
 
 interface ChatMessage {
   id: number;
   role: 'assistant' | 'user';
   text: string;
+  extracted?: ExtractedBooking;
   action?: { label: string; page: PageId };
 }
 
@@ -26,23 +37,144 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     thread.current?.scrollTo({ top: thread.current.scrollHeight });
   }, [messages, open]);
 
-  const answer = (raw: string) => {
-    const text = raw.toLocaleLowerCase();
-    if (/giá|bao nhiêu tiền|chi phí/.test(text)) {
-      return `Chơi lẻ ${dashboard.config.courtPrice.toLocaleString('vi-VN')}đ/người/giờ, mặc định 2 giờ. Ví dụ 2 người chơi 2 giờ: ${(2 * 2 * dashboard.config.courtPrice).toLocaleString('vi-VN')}đ.`;
+  // Bộ bóc tách ngôn ngữ tự nhiên NLP của AI-3
+  const parseBookingIntent = (text: string): ExtractedBooking | null => {
+    const raw = text.toLowerCase();
+
+    // Nhận dạng số người (vd: 4 người, 4 ng, 2 bạn, đánh đôi -> 4, đánh đơn -> 2)
+    let people = 2;
+    let hasPeople = false;
+    const peopleMatch = raw.match(/(\d+)\s*(người|nguoi|ng|bạn|khách)/);
+    if (peopleMatch) {
+      people = Math.min(4, Math.max(1, parseInt(peopleMatch[1], 10)));
+      hasPeople = true;
+    } else if (raw.includes('đánh đôi') || raw.includes('danh doi')) {
+      people = 4;
+      hasPeople = true;
+    } else if (raw.includes('đánh đơn') || raw.includes('danh don')) {
+      people = 2;
+      hasPeople = true;
     }
-    if (/giờ|mở cửa/.test(text)) {
-      return `CLB mở cửa ${String(dashboard.config.openingHour).padStart(2, '0')}:00–${String(dashboard.config.closingHour).padStart(2, '0')}:00.`;
+
+    // Nhận dạng thời lượng (vd: 2 tiếng, 2h, 1.5h, 3 giờ)
+    let duration = 2;
+    let hasDuration = false;
+    const durMatch = raw.match(/(\d+(\.\d+)?)\s*(tiếng|tieng|h|giờ|gio)/);
+    if (durMatch && !raw.includes('lúc') && !raw.includes('ngày')) {
+      duration = parseFloat(durMatch[1]);
+      hasDuration = true;
     }
-    if (/gói|tháng|hội viên/.test(text)) return 'Gói tháng: 1 tháng 449.000đ · 3 tháng 1.149.000đ · 6 tháng 1.999.000đ. Mỗi tháng gồm 30 lượt.';
-    if (/bàn|trống|còn chỗ/.test(text)) {
-      const available = dashboard.tables.filter((table) => table.status === 'available').length;
-      return `Theo dữ liệu sân hiện tại có ${available} bàn được đánh dấu trống. Để xem chi tiết theo thời gian, mở sơ đồ sân.`;
+
+    // Nhận dạng ngày (hôm nay, hn, hnay, tối mai, mai, ngày mai)
+    const today = new Date();
+    let targetDate = new Date(today);
+    let hasDate = false;
+
+    if (raw.includes('mai') || raw.includes('ngay mai') || raw.includes('tối mai')) {
+      targetDate.setDate(today.getDate() + 1);
+      hasDate = true;
+    } else if (raw.includes('hôm nay') || raw.includes('hnay') || raw.includes('hn') || raw.includes('tối nay')) {
+      hasDate = true;
     }
-    if (/lớp|giáo viên/.test(text)) {
-      return `Lớp học sử dụng 2 bàn khu dạy học và phải kết thúc trước ${dashboard.config.classCutoffHour}:00.`;
+
+    const dateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
+
+    // Nhận dạng giờ (vd: 7h tối, 19h, 19:00, 7h, 8h30, 20h)
+    let timeStr = '19:00';
+    let hasTime = false;
+
+    const time12Match = raw.match(/(\d{1,2})\s*h\s*(tối|toi|chiều|chieu|pm)/);
+    const timeMatch = raw.match(/(\d{1,2})([:h](\d{2}))?/);
+
+    if (time12Match) {
+      let h = parseInt(time12Match[1], 10);
+      if (h < 12) h += 12;
+      timeStr = `${String(h).padStart(2, '0')}:00`;
+      hasTime = true;
+    } else {
+      const specificHour = raw.match(/(?:lúc|vào|lúc\s+)?(\d{1,2})\s*h/);
+      if (specificHour) {
+        let h = parseInt(specificHour[1], 10);
+        if ((raw.includes('tối') || raw.includes('toi')) && h < 12) h += 12;
+        timeStr = `${String(h).padStart(2, '0')}:00`;
+        hasTime = true;
+      }
     }
-    return 'Mình có thể hỗ trợ về đặt bàn, tình trạng sân, giá chơi, gói tháng, giờ mở cửa và lớp học. Câu hỏi ngoài các thông tin này cần nhân viên hỗ trợ.';
+
+    // Tính độ tin cậy
+    let score = 0;
+    if (hasPeople) score += 25;
+    if (hasDate) score += 25;
+    if (hasTime) score += 30;
+    if (hasDuration) score += 15;
+
+    // Nếu chứa từ khóa đặt bàn hoặc có ít nhất 2 thực thể
+    const isBookingQuestion = /đặt|dat|book|chơi|choi|bàn|ban|giữ|giu/.test(raw);
+    if ((isBookingQuestion && score >= 25) || score >= 50) {
+      return {
+        customerName: user.name,
+        people,
+        date: dateStr,
+        time: timeStr,
+        duration: duration || 2,
+        confidence: Math.min(98, Math.max(65, score + 15)),
+      };
+    }
+
+    return null;
+  };
+
+  const answer = (raw: string): { text: string; extracted?: ExtractedBooking } => {
+    const text = raw.toLowerCase().trim();
+
+    // 1. Thử phân tích ý định đặt bàn bằng NLP
+    const bookingIntent = parseBookingIntent(raw);
+    if (bookingIntent) {
+      return {
+        text: `🤖 AI-3 đã bóc tách thông tin đặt bàn từ câu của bạn (Độ tin cậy: ${bookingIntent.confidence}%):\n` +
+          `• Khách hàng: ${bookingIntent.customerName}\n` +
+          `• Ngày chơi: ${bookingIntent.date}\n` +
+          `• Giờ bắt đầu: ${bookingIntent.time}\n` +
+          `• Thời lượng: ${bookingIntent.duration} giờ\n` +
+          `• Số người: ${bookingIntent.people} người (Tối đa 4 người/bàn)`,
+        extracted: bookingIntent,
+      };
+    }
+
+    // 2. Các câu hỏi nghiệp vụ thường gặp
+    if (/giá|gia|bao nhiêu|bao nhieu|chi phí|tiền/.test(text)) {
+      return {
+        text: `💰 Giá chơi lẻ: ${dashboard.config.courtPrice.toLocaleString('vi-VN')}đ/người/giờ (mặc định 2 giờ). Ví dụ 2 người chơi 2 giờ là ${(2 * 2 * dashboard.config.courtPrice).toLocaleString('vi-VN')}đ.\n` +
+          `Giáo viên: 250.000đ/lượt (2 tiếng).\n` +
+          `Gói tháng: 1 tháng (449.000đ), 3 tháng (1.149.000đ), 6 tháng (1.999.000đ).`,
+      };
+    }
+    if (/giờ|mở cửa|mo cua|đóng cửa|dong cua/.test(text)) {
+      return {
+        text: `⏰ Câu lạc bộ mở cửa từ ${String(dashboard.config.openingHour).padStart(2, '0')}:00 đến ${String(dashboard.config.closingHour).padStart(2, '0')}:00 hằng ngày.\n` +
+          `Bàn khu dạy học (dãy 1) mở cho khách sau ${dashboard.config.classCutoffHour}:00.`,
+      };
+    }
+    if (/gói|tháng|hội viên|gia hạn|cộng dồn/.test(text)) {
+      return {
+        text: `🎟️ Gói tháng có 30 lượt/kỳ 30 ngày. Khi còn ≤5 lượt, hệ thống cảnh báo và nhân viên hỗ trợ gia hạn. Khi gia hạn, số lượt còn lại được CỘNG DỒN vào gói mới (không bị reset)!`,
+      };
+    }
+    if (/bàn|trống|con ban|còn chỗ/.test(text)) {
+      const available = dashboard.tables.filter((t) => t.status === 'available').length;
+      return {
+        text: `🏓 Hiện tại CLB có ${available}/16 bàn đang trống. Hãy nhập yêu cầu đặt bàn (ví dụ: 'tối mai 7h cho 4 người chơi 2 tiếng') để AI hỗ trợ đặt ngay nhé!`,
+      };
+    }
+    if (/lớp|dạy|giáo viên|giao vien/.test(text)) {
+      return {
+        text: `🎓 Lớp học diễn ra 2 tiếng tại khu dạy học (bàn 1-4) và phải kết thúc trước ${dashboard.config.classCutoffHour}:00. Mỗi lớp phân bổ 2 bàn và cần Quản lý duyệt trước khi lên sân.`,
+      };
+    }
+
+    return {
+      text: 'Chào bạn! Mình là Trợ lý AI-3 của PingPongBros. Bạn có thể gõ câu tự nhiên như "tối mai 7h cho 4 người chơi 2 tiếng" hoặc hỏi về giá chơi, gói tháng, tình trạng sân và lớp học.',
+    };
   };
 
   const send = (event: FormEvent<HTMLFormElement>) => {
@@ -50,34 +182,147 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     const text = draft.trim();
     if (!text) return;
     const id = Date.now();
-    setMessages((current) => [...current, { id, role: 'user', text }, { id: id + 1, role: 'assistant', text: answer(text) }]);
+    const response = answer(text);
+    setMessages((current) => [
+      ...current,
+      { id, role: 'user', text },
+      { id: id + 1, role: 'assistant', text: response.text, extracted: response.extracted },
+    ]);
     setDraft('');
   };
 
+  const handleConfirmBotBooking = async (extracted: ExtractedBooking) => {
+    try {
+      const availableTable = dashboard.tables.find((t) => t.status === 'available');
+      if (!availableTable) {
+        onNotify('Rất tiếc hiện tại đã hết bàn trống! Bạn có thể chọn giờ khác hoặc vào hàng chờ.');
+        return;
+      }
+      const startIso = new Date(`${extracted.date}T${extracted.time}:00`).toISOString();
+      await createBooking({
+        tableId: availableTable.tableNumber,
+        customerName: extracted.customerName,
+        phone: user.phone,
+        email: user.email,
+        type: user.role === 'MEMBER' ? 'MEMBER' : 'WALK_IN',
+        startTime: startIso,
+        duration: extracted.duration,
+        people: extracted.people,
+        amount: user.role === 'MEMBER' ? 0 : extracted.people * extracted.duration * dashboard.config.courtPrice,
+        memberId: user.memberId ?? null,
+      });
+      onNotify(`AI-3 đã đặt bàn thành công: Bàn ${availableTable.tableNumber} · ${extracted.date} ${extracted.time}!`);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          role: 'assistant',
+          text: `✅ Đặt bàn thành công! Hệ thống đã phân bổ Bàn ${availableTable.tableNumber} cho bạn vào lúc ${extracted.time} (${extracted.date}). Vui lòng đến trước giờ chơi và đưa mã cho nhân viên quầy check-in nhé!`,
+        },
+      ]);
+    } catch {
+      onNotify('Lỗi khi AI đặt bàn.');
+    }
+  };
+
+  // Câu hỏi thường gặp hiển thị theo từng giao diện vai trò của người dùng
   const quickQuestions = user.role === 'TEACHER'
-    ? ['Đặt lớp học thế nào?', 'Giờ mở cửa?', 'Giá một lượt dạy?']
-    : user.role === 'STAFF' || user.role === 'MANAGER'
-      ? ['Còn bàn trống không?', 'Gói tháng giá thế nào?', 'Đặt bàn thế nào?']
-      : ['Còn bàn trống không?', 'Giá chơi bao nhiêu?', 'Gói tháng giá thế nào?', 'Giờ mở cửa?'];
+    ? ['Đăng ký lớp học thế nào?', 'Giá 1 lượt dạy là bao nhiêu?', 'Quy định giờ dạy học?', 'Tối mai 17h cho lớp 2 bàn']
+    : user.role === 'MEMBER'
+      ? ['Gói tháng còn bao nhiêu lượt?', 'Gia hạn gói có cộng dồn không?', 'Tối mai 19h cho 4 người chơi 2 tiếng', 'Còn bàn trống không?']
+      : user.role === 'STAFF' || user.role === 'MANAGER'
+        ? ['Quy tắc giữ bàn 15 phút?', 'Hết 30 lượt xử lý thế nào?', 'Giờ cao điểm dự báo lúc nào?', 'Tối mai 19h cho 4 người']
+        : ['Giá chơi lẻ bao nhiêu?', 'Tối mai 7h cho 4 người chơi 2 tiếng', 'Gói tháng giá thế nào?', 'CLB mở cửa đến mấy giờ?'];
 
   const askQuestion = (question: string) => {
     const id = Date.now();
-    setMessages((current) => [...current, { id, role: 'user', text: question }, { id: id + 1, role: 'assistant', text: answer(question) }]);
+    const response = answer(question);
+    setMessages((current) => [
+      ...current,
+      { id, role: 'user', text: question },
+      { id: id + 1, role: 'assistant', text: response.text, extracted: response.extracted },
+    ]);
   };
 
   return (
     <>
-      {open && <section className="bot" role="dialog" aria-label="Trợ lý đặt bàn AI">
-        <div className="bot-h"><b>Trợ lý đặt bàn <span className="tag" style={{ background: '#ffffff33', color: '#fff' }}>AI-3</span></b><button className="btn sm ghost" type="button" aria-label="Đóng trợ lý" onClick={() => setOpen(false)}>Đóng</button></div>
-        <div className="bot-st"><span>Xin chào, {user.name.split(/\s+/).slice(-1)[0]}</span></div>
-        <div className="bot-m" ref={thread} aria-live="polite">
-          {!messages.length && <div className="msg b">Xin chào! Hãy hỏi về đặt bàn, tình trạng sân, giá, gói tháng hoặc giờ hoạt động của CLB.</div>}
-          {messages.map((message) => <div key={message.id} className={`msg ${message.role === 'assistant' ? 'b' : 'u'}`}>{message.text}{message.action && <div className="btns"><button className="btn sm red" type="button" onClick={() => onNavigate(message.action!.page)}>{message.action.label}</button></div>}</div>)}
-        </div>
-        <div className="faq" aria-label="Câu hỏi thường gặp">{quickQuestions.map((question) => <button key={question} type="button" onClick={() => askQuestion(question)}>{question}</button>)}<button className="hum" type="button" onClick={() => onNotify('Yêu cầu hỗ trợ trực tiếp chưa được kết nối với API.')}>Gặp nhân viên</button></div>
-        <form className="bot-f" onSubmit={send}><input className="in" placeholder="Nhập yêu cầu hoặc câu hỏi..." autoComplete="off" aria-label="Tin nhắn" value={draft} onChange={(event) => setDraft(event.target.value)} /><button className="btn" type="submit">Gửi</button></form>
-      </section>}
-      <button className="bot-fab" type="button" aria-label={open ? 'Đóng trợ lý đặt bàn AI' : 'Mở trợ lý đặt bàn AI'} title="Trợ lý đặt bàn AI" onClick={() => setOpen((value) => !value)}>
+      {open && (
+        <section className="bot" role="dialog" aria-label="Trợ lý đặt bàn AI">
+          <div className="bot-h">
+            <b style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>Trợ lý đặt bàn</span>
+              <span className="tag" style={{ background: '#ffffff33', color: '#fff' }}>AI-3 NLP</span>
+            </b>
+            <button className="btn sm ghost" type="button" aria-label="Đóng trợ lý" onClick={() => setOpen(false)}>
+              Đóng
+            </button>
+          </div>
+          <div className="bot-st">
+            <span>Xin chào, {user.name} ({user.role === 'MEMBER' ? 'Khách tháng' : user.role === 'TEACHER' ? 'Giáo viên' : user.role === 'MANAGER' ? 'Quản lý' : user.role === 'STAFF' ? 'Nhân viên' : 'Khách vãng lai'})</span>
+          </div>
+          <div className="bot-m" ref={thread} aria-live="polite">
+            {!messages.length && (
+              <div className="msg b">
+                Xin chào! Tôi là Trợ lý AI-3. Bạn có thể nhập câu tự nhiên (ví dụ: <i>"tối mai 7h cho 4 người chơi 2 tiếng"</i>) hoặc chọn các câu hỏi bên dưới.
+              </div>
+            )}
+            {messages.map((message) => (
+              <div key={message.id} className={`msg ${message.role === 'assistant' ? 'b' : 'u'}`}>
+                <div style={{ whiteSpace: 'pre-line' }}>{message.text}</div>
+                {message.extracted && (
+                  <div style={{ marginTop: 8, padding: '8px 10px', background: '#f0f4fc', borderRadius: 6, border: '1px solid #1d4ba8' }}>
+                    <button
+                      className="btn sm red"
+                      type="button"
+                      style={{ width: '100%', fontSize: 13, fontWeight: 'bold' }}
+                      onClick={() => handleConfirmBotBooking(message.extracted!)}
+                    >
+                      Xác nhận đặt bàn ngay
+                    </button>
+                  </div>
+                )}
+                {message.action && (
+                  <div className="btns">
+                    <button className="btn sm red" type="button" onClick={() => onNavigate(message.action!.page)}>
+                      {message.action.label}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="faq" aria-label="Câu hỏi thường gặp theo vai trò">
+            {quickQuestions.map((question) => (
+              <button key={question} type="button" onClick={() => askQuestion(question)}>
+                {question}
+              </button>
+            ))}
+          </div>
+
+          <form className="bot-f" onSubmit={send}>
+            <input
+              className="in"
+              placeholder="Nhập yêu cầu: tối mai 7h cho 4 người..."
+              autoComplete="off"
+              aria-label="Tin nhắn"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+            <button className="btn" type="submit">
+              Gửi
+            </button>
+          </form>
+        </section>
+      )}
+
+      <button
+        className="bot-fab"
+        type="button"
+        aria-label={open ? 'Đóng trợ lý đặt bàn AI' : 'Mở trợ lý đặt bàn AI'}
+        title="Trợ lý đặt bàn AI (AI-3)"
+        onClick={() => setOpen((value) => !value)}
+      >
         <Paddle size={34} />
       </button>
     </>
