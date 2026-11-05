@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { checkInBooking, checkOutBooking, createBooking, fetchDashboard } from '../services/api';
+import { checkInBooking, checkOutBooking, createBooking, createWaitlist, fetchDashboard } from '../services/api';
 import type { Booking, DashboardResponse, TableInfo, User } from '../types';
 import { venueNow } from '../utils/time';
 import { validateCustomerContact } from '../utils/validation';
@@ -269,6 +269,7 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
   const [duration, setDuration] = useState(dashboard.config.defaultHours);
   const [people, setPeople] = useState(2);
   const [submitting, setSubmitting] = useState(false);
+  const [noTableWarning, setNoTableWarning] = useState(false);
   const cost = people * duration * dashboard.config.courtPrice;
   const endTime = (() => {
     const [hour, minute] = startTime.split(':').map(Number);
@@ -278,6 +279,7 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setNoTableWarning(false);
     const contactValidation = validateCustomerContact(name, phone, email, true);
     if (!contactValidation.valid) {
       onNotify(contactValidation.errors[0]);
@@ -290,19 +292,26 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
     const now = new Date();
     if (start < now) errors.push('Giờ bắt đầu đã qua, vui lòng chọn giờ khác.');
     if (start.getHours() < dashboard.config.openingHour || start.getHours() + duration > dashboard.config.closingHour) errors.push('Thời lượng phải nằm trong giờ mở cửa.');
-    const availableTable = dashboard.tables.find((table) => {
-      if (table.zone === 'teaching' && start.getHours() < dashboard.config.classCutoffHour) return false;
-      return table.status === 'available';
-    });
-    if (!availableTable) errors.push('Hiện chưa có bàn trống phù hợp.');
+
     if (errors.length) {
       onNotify(errors[0]);
       return;
     }
+
+    const availableTable = dashboard.tables.find((table) => {
+      if (table.zone === 'teaching' && start.getHours() < dashboard.config.classCutoffHour) return false;
+      return table.status === 'available';
+    });
+
+    if (!availableTable) {
+      setNoTableWarning(true);
+      return;
+    }
+
     setSubmitting(true);
     try {
       await createBooking({
-        tableId: availableTable!.tableNumber,
+        tableId: availableTable.tableNumber,
         customerName: name.trim(),
         phone,
         email,
@@ -314,9 +323,32 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
         memberId: user.memberId ?? null,
       });
       await onRefresh();
-      onNotify(`Đặt bàn thành công: Bàn ${availableTable!.tableNumber} · ${bookingDate} ${startTime}.`);
+      onNotify(`Đặt bàn thành công: Bàn ${availableTable.tableNumber} · ${bookingDate} ${startTime}.`);
     } catch (reason) {
       onNotify(reason instanceof Error ? reason.message : 'Không thể tạo lượt đặt.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleAddToWaitlist = async () => {
+    setSubmitting(true);
+    try {
+      const start = new Date(`${bookingDate}T${startTime}:00`);
+      await createWaitlist({
+        customerName: name.trim(),
+        phone,
+        email,
+        people,
+        startTime: start.toISOString(),
+        duration,
+        type: user.role === 'MEMBER' ? 'MEMBER' : 'WALK_IN',
+      });
+      await onRefresh();
+      setNoTableWarning(false);
+      onNotify('Đã thêm khách vào danh sách chờ. Hệ thống sẽ tự động gán bàn khi có bàn trống phù hợp!');
+    } catch (reason) {
+      onNotify(reason instanceof Error ? reason.message : 'Lỗi khi thêm vào danh sách chờ.');
     } finally {
       setSubmitting(false);
     }
@@ -326,6 +358,22 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
     <>
       <h3>Đặt bàn</h3>
       <p className="hint" style={{ marginTop: 4 }}>Hệ thống tự phân bàn trống, bạn không cần chọn bàn. Mặc định chơi 2 giờ, tối đa {dashboard.config.maxPeoplePerTable} người mỗi bàn.</p>
+
+      {noTableWarning && (
+        <div className="alert" style={{ background: '#fdf2e9', borderColor: '#e08a3c', color: '#8a4b08', margin: '12px 0', padding: 12, borderRadius: 8 }}>
+          <b>⚠️ Hiện tại khung giờ {startTime} ({bookingDate}) đã hết bàn trống!</b>
+          <p style={{ margin: '6px 0 10px', fontSize: 13 }}>Bạn có muốn thêm khách vào hàng chờ để tự động nhận bàn ngay khi có bàn trống không?</p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn sm red" type="button" onClick={handleAddToWaitlist} disabled={submitting}>
+              Thêm vào hàng chờ
+            </button>
+            <button className="btn sm ghost" type="button" onClick={() => setNoTableWarning(false)}>
+              Hủy
+            </button>
+          </div>
+        </div>
+      )}
+
       <form noValidate style={{ marginTop: 12 }} onSubmit={submit}>
         <div className="fg">
           <div className="full"><label htmlFor="bk-name">Họ tên khách</label><input className="in" id="bk-name" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} /></div>
