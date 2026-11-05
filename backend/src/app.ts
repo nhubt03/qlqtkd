@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { dashboardData } from './data/mock.js';
 import { isDbConnected } from './services/db.js';
-import { sendBookingConfirmationEmail, getEmailLogs } from './services/mailer.js';
+import { sendBookingConfirmationEmail, getEmailLogs, sendOtpEmail } from './services/mailer.js';
 import { sweepExpiredBookings } from './services/scheduler.js';
 
 dotenv.config();
@@ -49,10 +49,52 @@ const handleLogin = (req: express.Request, res: express.Response) => {
 app.post('/api/auth/login', handleLogin);
 app.post('/api/dang-nhap', handleLogin);
 
-app.post('/api/dang-ky', (req, res) => {
-  const { ho_ten, sdt, email, mat_khau, vai_tro } = req.body ?? {};
+// Kho lưu trữ mã OTP trong bộ nhớ (hạn 5 phút)
+const otpStore = new Map<string, { otp: string; expiresAt: number; name: string }>();
+
+// API gửi mã OTP về email đăng ký
+app.post(['/api/auth/send-otp', '/api/gui-otp'], async (req, res) => {
+  const { email, ho_ten } = req.body ?? {};
+  if (!email || !String(email).includes('@')) {
+    return res.status(400).json({ message: 'Vui lòng cung cấp địa chỉ email hợp lệ để nhận mã OTP.' });
+  }
+
+  const cleanEmail = String(email).toLowerCase().trim();
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  otpStore.set(cleanEmail, {
+    otp,
+    expiresAt: Date.now() + 5 * 60 * 1000, // 5 phút
+    name: String(ho_ten || 'Quý khách'),
+  });
+
+  const sendRes = await sendOtpEmail(cleanEmail, otp, String(ho_ten || 'Quý khách'));
+  res.json({
+    ok: true,
+    message: `Mã xác thực OTP đã được gửi về email ${cleanEmail}. Vui lòng kiểm tra hộp thư đến.`,
+    sendResult: sendRes,
+  });
+});
+
+app.post(['/api/dang-ky', '/api/auth/register'], (req, res) => {
+  const { ho_ten, sdt, email, mat_khau, vai_tro, otp } = req.body ?? {};
   if (!ho_ten || !sdt) {
     return res.status(400).json({ message: 'Vui lòng cung cấp họ tên và số điện thoại.' });
+  }
+
+  // Nếu người dùng có nhập email -> Bắt buộc xác thực mã OTP
+  if (email && String(email).trim().length > 0) {
+    const cleanEmail = String(email).toLowerCase().trim();
+    const stored = otpStore.get(cleanEmail);
+
+    if (!stored || stored.otp !== String(otp || '').trim() || Date.now() > stored.expiresAt) {
+      return res.status(400).json({
+        message: 'Mã xác thực OTP không chính xác hoặc đã hết hạn (5 phút). Vui lòng kiểm tra email hoặc nhấn Gửi lại OTP.',
+        invalidOtp: true,
+      });
+    }
+
+    // Đã xác thực thành công -> giải phóng OTP khỏi bộ nhớ
+    otpStore.delete(cleanEmail);
   }
 
   const newUser = {

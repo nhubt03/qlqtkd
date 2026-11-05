@@ -91,3 +91,21 @@ export async function createWaitlist(input: {
 export async function updateConfig(config: Partial<DashboardResponse['config']>): Promise<void> {
   await api.post('/config', config);
 }
+
+
+export async function sendRegisterOtp(email: string, ho_ten: string): Promise<{ ok: boolean; message: string }> {
+  const { data } = await api.post('/auth/send-otp', { email, ho_ten });
+  return data;
+}
+
+export async function registerUser(input: {
+  ho_ten: string;
+  sdt: string;
+  email: string;
+  mat_khau: string;
+  otp?: string;
+  vai_tro?: string;
+}): Promise<{ ok: boolean; message: string; user?: any }> {
+  const { data } = await api.post('/dang-ky', input);
+  return data;
+}

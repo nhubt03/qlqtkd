@@ -187,3 +187,88 @@ export async function sendBookingConfirmationEmail(booking: {
     message: `Đã ghi nhận gửi email mã #${bookingCode} tới ${booking.email} (Outbox sẵn sàng)`,
   };
 }
+
+
+/**
+ * Gửi email chứa mã xác thực OTP đăng ký tài khoản
+ */
+export async function sendOtpEmail(email: string, otp: string, customerName: string): Promise<{ success: boolean; message: string }> {
+  const subject = `[PingPongBros] Mã xác thực OTP đăng ký tài khoản: ${otp}`;
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #f4f6f9; margin: 0; padding: 24px; color: #2d3748; }
+        .box { max-width: 520px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border: 1px solid #e2e8f0; }
+        .hdr { background: linear-gradient(135deg, #0d3b66, #1d4ba8); color: #ffffff; padding: 24px; text-align: center; }
+        .hdr h1 { margin: 0; font-size: 20px; color: #ffffff; }
+        .body { padding: 28px; text-align: center; }
+        .otp-box { background: #f0f7ff; border: 2px dashed #0066cc; border-radius: 8px; padding: 16px; margin: 20px 0; }
+        .otp-code { font-size: 34px; font-weight: 900; letter-spacing: 6px; color: #0066cc; }
+        .alert { background: #fffaf0; border-left: 4px solid #dd6b20; padding: 10px 14px; margin: 16px 0; border-radius: 4px; font-size: 13px; color: #7b341e; text-align: left; }
+        .ftr { background: #f7fafc; padding: 14px; text-align: center; font-size: 12px; color: #a0aec0; border-top: 1px solid #edf2f7; }
+      </style>
+    </head>
+    <body>
+      <div class="box">
+        <div class="hdr">
+          <h1>🏓 CLB BÓNG BÀN PINGPONGBROS</h1>
+          <p style="margin: 4px 0 0; opacity: 0.85; font-size: 13px; color: #ffffff;">Xác thực đăng ký tài khoản</p>
+        </div>
+        <div class="body">
+          <p style="text-align: left; margin: 0 0 12px;">Xin chào <b>${customerName || 'Quý khách'}</b>,</p>
+          <p style="text-align: left; margin: 0; font-size: 14px; color: #4a5568;">
+            Bạn đang thực hiện đăng ký tài khoản tại hệ thống CLB Bóng bàn PingPongBros. Dưới đây là mã xác thực OTP của bạn:
+          </p>
+
+          <div class="otp-box">
+            <div style="font-size: 12px; text-transform: uppercase; color: #64748b; margin-bottom: 4px; font-weight: bold;">Mã xác thực OTP</div>
+            <div class="otp-code">${otp}</div>
+          </div>
+
+          <div class="alert">
+            ⏱️ <b>Thời hạn:</b> Mã OTP này có hiệu lực trong vòng <b>5 phút</b>.<br/>
+            🔒 <b>Bảo mật:</b> Vui lòng tuyệt đối không chia sẻ mã này cho bất kỳ ai.
+          </div>
+
+          <p style="text-align: left; font-size: 13px; color: #718096; margin-top: 16px;">
+            Nếu bạn không thực hiện yêu cầu này, vui lòng bỏ qua email.
+          </p>
+        </div>
+        <div class="ftr">
+          © ${new Date().getFullYear()} PingPongBros Club · 71 Ngũ Hành Sơn, Đà Nẵng
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  emailOutbox.push({
+    id: `EMAIL-OTP-${Date.now()}`,
+    to: email,
+    subject,
+    sentAt: new Date().toISOString(),
+    status: hasSmtpCredentials ? 'SENT' : 'SIMULATED',
+    preview: `Mã OTP ${otp} cho ${customerName} (${email})`,
+  });
+
+  if (transporter && hasSmtpCredentials) {
+    try {
+      console.log(`[SMTP] Sending OTP ${otp} to ${email}...`);
+      await transporter.sendMail({
+        from: smtpFrom,
+        to: email,
+        subject,
+        html: htmlContent,
+      });
+      console.log(`[SMTP] Successfully delivered OTP email to ${email}!`);
+      return { success: true, message: `Đã gửi mã OTP đến ${email}` };
+    } catch (err: any) {
+      console.warn(`[SMTP Warning] Error delivering OTP to ${email}:`, err?.message || err);
+    }
+  }
+
+  return { success: true, message: `Đã tạo mã OTP cho ${email} (Outbox sẵn sàng)` };
+}

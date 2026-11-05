@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { isValidEmail, isValidVietnamPhone, validateCustomerContact } from '../utils/validation';
+import { sendRegisterOtp, registerUser } from '../services/api';
 
 interface LoginPageProps {
   error: string;
@@ -19,7 +20,18 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
   const [regPhone, setRegPhone] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [regOtp, setRegOtp] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [otpCooldown, setOtpCooldown] = useState(0);
   const [isTeacher, setIsTeacher] = useState(false);
+
+  // Đếm ngược thời gian gửi lại OTP
+  useEffect(() => {
+    if (otpCooldown <= 0) return;
+    const timer = setInterval(() => setOtpCooldown((prev) => prev - 1), 1000);
+    return () => clearInterval(timer);
+  }, [otpCooldown]);
 
   const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -31,7 +43,6 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
       return;
     }
 
-    // Kiểm tra định dạng đầu vào đăng nhập
     const isPhoneLike = /^[0-9+]+$/.test(trimmedId);
     if (isPhoneLike) {
       if (!isValidVietnamPhone(trimmedId)) {
@@ -60,11 +71,32 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
     }
   };
 
-  const submitRegister = (event: FormEvent<HTMLFormElement>) => {
+  // Gửi mã OTP xác thực qua email
+  const handleSendOtp = async () => {
+    if (!regEmail || !isValidEmail(regEmail)) {
+      setRegisterMessage('Vui lòng nhập địa chỉ Email hợp lệ trước khi nhận mã OTP.');
+      return;
+    }
+    setSendingOtp(true);
+    setRegisterMessage('');
+    try {
+      const res = await sendRegisterOtp(regEmail.trim(), regName.trim());
+      setOtpSent(true);
+      setOtpCooldown(60);
+      setRegisterMessage(res.message || `Mã OTP đã được gửi đến email ${regEmail}. Vui lòng kiểm tra hộp thư.`);
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || 'Không thể gửi mã OTP qua email. Vui lòng thử lại.';
+      setRegisterMessage(msg);
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  const submitRegister = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setRegisterMessage('');
 
-    const validation = validateCustomerContact(regName, regPhone, regEmail, false);
+    const validation = validateCustomerContact(regName, regPhone, regEmail, true);
     if (!validation.valid) {
       setRegisterMessage(validation.errors[0]);
       return;
@@ -73,8 +105,39 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
       setRegisterMessage('Mật khẩu phải có ít nhất 6 ký tự.');
       return;
     }
+    if (!otpSent) {
+      setRegisterMessage('Vui lòng nhấn "Nhận mã OTP qua Email" để lấy mã xác thực.');
+      return;
+    }
+    if (!regOtp || regOtp.trim().length !== 6) {
+      setRegisterMessage('Vui lòng nhập đúng 6 chữ số mã xác thực OTP đã được gửi vào email của bạn.');
+      return;
+    }
 
-    setRegisterMessage(`Đăng ký tài khoản thành công cho ${regName}! Hãy chuyển sang tab Đăng nhập để sử dụng.`);
+    setSubmitting(true);
+    try {
+      const res = await registerUser({
+        ho_ten: regName.trim(),
+        sdt: regPhone.trim(),
+        email: regEmail.trim(),
+        mat_khau: regPassword,
+        otp: regOtp.trim(),
+        vai_tro: isTeacher ? 'TEACHER' : 'GUEST',
+      });
+
+      setRegisterMessage(`✓ ${res.message || 'Đăng ký tài khoản thành công!'} Đang chuyển sang tab Đăng nhập...`);
+      setIdentifier(regEmail.trim());
+      setPassword(regPassword);
+      setTimeout(() => {
+        setTab('login');
+        setRegisterMessage('');
+      }, 2000);
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || 'Đăng ký tài khoản thất bại. Vui lòng kiểm tra lại.';
+      setRegisterMessage(msg);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -100,62 +163,83 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
         <p className="sub">16 bàn, 4 dãy, mở cửa 06:00–21:00 tại Đà Nẵng. Đặt bàn trước, nhận mã bàn, đến sân và chơi.</p>
       </section>
 
-      <section className="login-box">
-        <div className="card">
-          <div className="tabs" role="tablist" aria-label="Tài khoản">
-            <button type="button" role="tab" aria-selected={tab === 'login'} onClick={() => { setTab('login'); setFormError(''); }}>Đăng nhập</button>
-            <button type="button" role="tab" aria-selected={tab === 'register'} onClick={() => { setTab('register'); setRegisterMessage(''); }}>Đăng ký</button>
+      <section className="login-pane">
+        <div className="login-box">
+          <div className="tabs" role="tablist">
+            <button
+              className={`tab ${tab === 'login' ? 'active' : ''}`}
+              role="tab"
+              aria-selected={tab === 'login'}
+              onClick={() => {
+                setTab('login');
+                setFormError('');
+                setRegisterMessage('');
+              }}
+            >
+              Đăng nhập
+            </button>
+            <button
+              className={`tab ${tab === 'register' ? 'active' : ''}`}
+              role="tab"
+              aria-selected={tab === 'register'}
+              onClick={() => {
+                setTab('register');
+                setFormError('');
+                setRegisterMessage('');
+              }}
+            >
+              Đăng ký tài khoản
+            </button>
           </div>
+
           {tab === 'login' ? (
             <form onSubmit={submitLogin} noValidate>
-              <div className="fg">
-                <div className="full">
-                  <label htmlFor="login-id">Email hoặc số điện thoại (10 số VN)</label>
+              <div className="login-fields">
+                <div>
+                  <label htmlFor="login-id">Email hoặc Số điện thoại</label>
                   <input
                     className="in"
                     id="login-id"
                     autoComplete="username"
-                    placeholder="ten@gmail.com hoặc 09xxxxxxxx"
+                    placeholder="quanly@pingpongbros.vn hoặc 0905123456"
                     value={identifier}
-                    onChange={(event) => setIdentifier(event.target.value)}
+                    onChange={(e) => setIdentifier(e.target.value)}
                   />
                 </div>
-                <div className="full">
-                  <label htmlFor="login-password">Mật khẩu</label>
+                <div>
+                  <label htmlFor="login-pass">Mật khẩu</label>
                   <input
                     className="in"
-                    id="login-password"
+                    id="login-pass"
                     type="password"
                     autoComplete="current-password"
                     value={password}
-                    onChange={(event) => setPassword(event.target.value)}
+                    onChange={(e) => setPassword(e.target.value)}
                   />
                 </div>
-                <div className="full">
-                  <label className="gvchk">
-                    <input type="checkbox" checked={isTeacher} onChange={(e) => setIsTeacher(e.target.checked)} />
-                    <span>Bạn là giáo viên và muốn đặt lịch cho lớp học</span>
-                  </label>
-                </div>
-                <div className="full">
-                  <button className="btn" style={{ width: '100%' }} type="submit" disabled={submitting}>
-                    {submitting ? 'Đang đăng nhập...' : 'Đăng nhập'}
-                  </button>
+                <button className="btn" type="submit" disabled={submitting}>
+                  {submitting ? 'Đang xác thực...' : 'Vào hệ thống'}
+                </button>
+              </div>
+
+              {(formError || error) && <p className="err" role="alert">{formError || error}</p>}
+
+              <div className="login-quick">
+                <small>Tài khoản mẫu để thử nghiệm nhanh:</small>
+                <div className="login-tags">
+                  <button type="button" onClick={() => { setIdentifier('quanly@pingpongbros.vn'); setPassword('123456'); }}>Quản lý</button>
+                  <button type="button" onClick={() => { setIdentifier('nhanvien@pingpongbros.vn'); setPassword('123456'); }}>Nhân viên</button>
+                  <button type="button" onClick={() => { setIdentifier('giaovien@pingpongbros.vn'); setPassword('123456'); }}>Giáo viên</button>
+                  <button type="button" onClick={() => { setIdentifier('khachthang@gmail.com'); setPassword('123456'); }}>Khách tháng</button>
+                  <button type="button" onClick={() => { setIdentifier('vanglai@gmail.com'); setPassword('123456'); }}>Khách vãng lai</button>
                 </div>
               </div>
-              {(formError || error) && <p className="err" role="alert">{formError || error}</p>}
-              <p className="hint" style={{ marginTop: 8 }}>
-                Chưa có tài khoản? Bấm Đăng ký: lần đầu bạn vào giao diện khách vãng lai, và tự chuyển sang khách tháng khi số điện thoại hoặc email của bạn có trong danh sách gói tháng.
-              </p>
-              <p className="hint demo-note" style={{ marginTop: 10 }}>
-                Khoá tài khoản khi nhập sai quá 5 lần không áp dụng trong bản demo.
-              </p>
             </form>
           ) : (
-            <form noValidate onSubmit={submitRegister}>
-              <div className="fg">
-                <div className="full">
-                  <label htmlFor="register-name">Họ tên</label>
+            <form onSubmit={submitRegister} noValidate>
+              <div className="login-fields">
+                <div>
+                  <label htmlFor="register-name">Họ và tên</label>
                   <input
                     className="in"
                     id="register-name"
@@ -177,16 +261,54 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
                   />
                 </div>
                 <div>
-                  <label htmlFor="register-email">Email</label>
-                  <input
-                    className="in"
-                    id="register-email"
-                    inputMode="email"
-                    placeholder="ten@gmail.com"
-                    value={regEmail}
-                    onChange={(e) => setRegEmail(e.target.value)}
-                  />
+                  <label htmlFor="register-email">Địa chỉ Email (Nhận mã OTP)</label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      className="in"
+                      id="register-email"
+                      inputMode="email"
+                      placeholder="ten@gmail.com"
+                      value={regEmail}
+                      onChange={(e) => {
+                        setRegEmail(e.target.value);
+                        setOtpSent(false);
+                      }}
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      className="btn ghost sm"
+                      type="button"
+                      disabled={sendingOtp || otpCooldown > 0}
+                      onClick={handleSendOtp}
+                      style={{ whiteSpace: 'nowrap' }}
+                    >
+                      {sendingOtp ? 'Đang gửi...' : otpCooldown > 0 ? `${otpCooldown}s` : 'Nhận OTP'}
+                    </button>
+                  </div>
                 </div>
+
+                {/* KHUNG NHẬP MÃ OTP GỬI VỀ EMAIL */}
+                {otpSent && (
+                  <div className="full" style={{ background: '#f0f7ff', border: '1px dashed #0066cc', padding: '10px 12px', borderRadius: 8, marginTop: 4 }}>
+                    <label htmlFor="register-otp" style={{ fontWeight: 'bold', color: '#0066cc', fontSize: 13 }}>
+                      Mã xác thực OTP (6 chữ số trong Email)
+                    </label>
+                    <input
+                      className="in"
+                      id="register-otp"
+                      inputMode="numeric"
+                      maxLength={6}
+                      placeholder="Nhập mã 6 số (ví dụ: 582910)"
+                      value={regOtp}
+                      onChange={(e) => setRegOtp(e.target.value.replace(/\D/g, ''))}
+                      style={{ letterSpacing: 4, fontWeight: 'bold', fontSize: 16, marginTop: 4 }}
+                    />
+                    <small style={{ color: '#475569', display: 'block', marginTop: 4, fontSize: 11 }}>
+                      Mã đã được gửi đến <b>{regEmail}</b>. Vui lòng kiểm tra hộp thư đến (hoặc thư mục Spam).
+                    </small>
+                  </div>
+                )}
+
                 <div>
                   <label htmlFor="register-password">Mật khẩu</label>
                   <input
@@ -206,12 +328,16 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
                   </label>
                 </div>
                 <div className="full">
-                  <button className="btn" style={{ width: '100%' }} type="submit">
-                    Tạo tài khoản
+                  <button className="btn" style={{ width: '100%' }} type="submit" disabled={submitting}>
+                    {submitting ? 'Đang tạo tài khoản...' : 'Xác thực OTP & Tạo tài khoản'}
                   </button>
                 </div>
               </div>
-              {registerMessage && <p className={registerMessage.includes('thành công') ? 'hint t-ok' : 'err'} role="status">{registerMessage}</p>}
+              {registerMessage && (
+                <p className={registerMessage.includes('✓') || registerMessage.includes('gửi về') || registerMessage.includes('thành công') ? 'hint t-ok' : 'err'} role="status" style={{ marginTop: 10 }}>
+                  {registerMessage}
+                </p>
+              )}
             </form>
           )}
         </div>

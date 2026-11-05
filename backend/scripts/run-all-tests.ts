@@ -143,21 +143,34 @@ async function runAllTests() {
     }
 
     {
-      // TC-05: Đăng ký tài khoản Khách vãng lai mới
+      // TC-05: Gửi mã OTP về Email và Đăng ký tài khoản Khách hàng mới
+      const testEmail = 'test_khach@gmail.com';
+      await request(server, 'POST', '/api/auth/send-otp', {
+        email: testEmail,
+        ho_ten: 'Lê Văn Test',
+      });
+
+      // Lấy mã OTP từ outbox để xác thực
+      const resEmails = await request(server, 'GET', '/api/system/emails');
+      const latestOtpMail = resEmails.body?.outbox?.find((m: any) => m.to === testEmail);
+      const otpMatch = latestOtpMail?.preview?.match(/\d{6}/);
+      const otp = otpMatch ? otpMatch[0] : '123456';
+
       const res = await request(server, 'POST', '/api/dang-ky', {
         ho_ten: 'Lê Văn Test',
         sdt: '0912999888',
-        email: 'test_khach@gmail.com',
+        email: testEmail,
         mat_khau: '123456',
+        otp,
         vai_tro: 'GUEST',
       });
       results.push({
         id: 'TC-05',
         category: 'Xác thực',
-        requirement: 'FR01',
-        description: 'Đăng ký tài khoản khách hàng mới',
+        requirement: 'FR01, OTP Email',
+        description: 'Gửi mã OTP về Email và xác thực tạo tài khoản mới',
         status: res.status === 201 && res.body?.ok === true ? 'PASS' : 'FAIL',
-        detail: `Status: ${res.status}, Created User: ${res.body?.user?.name}`,
+        detail: `Status: ${res.status}, OTP: ${otp}, User: ${res.body?.user?.name}`,
       });
     }
 
