@@ -20,14 +20,16 @@ const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
 const smtpPort = Number(process.env.SMTP_PORT) || 587;
 const smtpSecure = process.env.SMTP_SECURE === 'true';
 const smtpUser = process.env.SMTP_USER || '';
-const smtpPass = process.env.SMTP_PASS || '';
-const smtpFrom = process.env.SMTP_FROM || `"PingPongBros Club" <no-reply@pingpongbros.vn>`;
+// Loại bỏ khoảng trắng trong mật khẩu ứng dụng Gmail nếu có
+const rawPass = process.env.SMTP_PASS || '';
+const cleanPass = rawPass.replace(/["'\s]/g, '');
+const smtpFrom = process.env.SMTP_FROM || `"PingPongBros Club" <pingpongbros.club@gmail.com>`;
 
-// Chỉ kích hoạt SMTP thực tế khi đã có thông tin tài khoản thật (không phải placeholder demo)
+// Kiểm tra có thông tin SMTP thực tế
 const hasSmtpCredentials = Boolean(
   smtpUser &&
-  smtpPass &&
-  smtpPass !== 'your-app-password' &&
+  cleanPass &&
+  cleanPass !== 'your-app-password' &&
   !smtpUser.includes('example')
 );
 
@@ -35,16 +37,19 @@ let transporter: Transporter | null = null;
 
 if (hasSmtpCredentials) {
   transporter = nodemailer.createTransport({
+    service: smtpHost.includes('gmail') ? 'gmail' : undefined,
     host: smtpHost,
     port: smtpPort,
     secure: smtpSecure,
     auth: {
       user: smtpUser,
-      pass: smtpPass,
+      pass: cleanPass,
     },
-    connectionTimeout: 2500,
-    greetingTimeout: 2500,
+    tls: {
+      rejectUnauthorized: false,
+    },
   });
+  console.log(`[SMTP] Initialized SMTP Transporter for ${smtpUser} via ${smtpHost}`);
 }
 
 /**
@@ -131,7 +136,7 @@ export async function sendBookingConfirmationEmail(booking: {
             Quý khách vui lòng đến quầy và cung cấp mã <b>${bookingCode}</b> để nhân viên check-in trong vòng <b>15 phút</b> kể từ giờ hẹn. Sau 15 phút, hệ thống sẽ tự động hủy lịch để nhường bàn cho khách hàng trong hàng chờ.
           </div>
 
-          <p style="font-size: 13px; color: #4a5568;">Mọi thắc mắc xin vui lòng liên hệ hotline: <b>0905 123 456</b> hoặc phản hồi trực tiếp email này.</p>
+          <p style="font-size: 13px; color: #4a5568;">Mọi thắc mắc xin vui lòng liên hệ hotline: <b>0918 901 284</b> hoặc phản hồi trực tiếp email này.</p>
         </div>
         <div class="ftr">
           © ${new Date().getFullYear()} PingPongBros Club - Đam mê trong từng đường bóng.<br/>
@@ -142,13 +147,13 @@ export async function sendBookingConfirmationEmail(booking: {
     </html>
   `;
 
-  // 1. Ghi nhận ngay vào Email Outbox (đảm bảo không bị trễ thời gian thực)
+  // 1. Ghi nhận ngay vào Email Outbox
   const emailEntry: EmailLog = {
     id: `EMAIL-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     to: booking.email,
     subject,
     sentAt: new Date().toISOString(),
-    status: hasSmtpCredentials ? 'SENT' : 'SIMULATED',
+    status: 'SIMULATED',
     preview: `Mã ${bookingCode} cho ${booking.customerName} (${booking.email}). Giao diện HTML đã kết xuất.`,
   };
   emailOutbox.push(emailEntry);
@@ -156,24 +161,26 @@ export async function sendBookingConfirmationEmail(booking: {
   // 2. Lưu vết thông báo vào SQL Server nếu có kết nối
   recordNotificationSQL(null, subject, `Mã đặt bàn ${bookingCode} cho khách ${booking.customerName} lúc ${timeStr} ${dateStr}`).catch(() => {});
 
-  // 3. Nếu có thông tin SMTP thật thì gửi qua SMTP transporter
+  // 3. Gửi email thực tế qua Google SMTP
   if (transporter && hasSmtpCredentials) {
     try {
-      await transporter.sendMail({
+      console.log(`[SMTP] Sending real email to ${booking.email}...`);
+      const info = await transporter.sendMail({
         from: smtpFrom,
         to: booking.email,
         subject,
         html: htmlContent,
       });
-      console.log(`[SMTP] Successfully sent confirmation email to ${booking.email} (Code: ${bookingCode})`);
+
+      emailEntry.status = 'SENT';
+      console.log(`[SMTP] Successfully delivered email to ${booking.email}! MessageId: ${info.messageId}`);
       return { success: true, mode: 'SMTP', message: `Đã gửi email xác nhận thành công tới ${booking.email}` };
     } catch (err: any) {
-      console.warn(`[SMTP Warning] Could not deliver to ${booking.email} via external SMTP (${err?.message || err}). Mail is safely saved in local outbox.`);
-      emailEntry.status = 'SIMULATED';
+      console.warn(`[SMTP Warning] Error delivering to ${booking.email} via SMTP:`, err?.message || err);
+      emailEntry.status = 'FAILED';
     }
   }
 
-  console.log(`[Email Outbox] Recorded booking confirmation email for ${booking.email} (Code: ${bookingCode})`);
   return {
     success: true,
     mode: 'OUTBOX',
