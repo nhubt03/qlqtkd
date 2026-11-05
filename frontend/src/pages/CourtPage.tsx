@@ -32,21 +32,20 @@ const dayKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() +
 interface CourtPageProps {
   dashboard: DashboardResponse;
   user: User;
-  demoClock: boolean;
   onNotify: (message: string) => void;
 }
 
-export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPageProps) {
+export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
   const isStaff = user.role === 'MANAGER' || user.role === 'STAFF';
   const [selectedTable, setSelectedTable] = useState<number | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
-  const [date, setDate] = useState(() => dayKey(venueNow(demoClock)));
-  const [time, setTime] = useState(() => timeText(venueNow(demoClock)));
+  const [date, setDate] = useState(() => dayKey(venueNow()));
+  const [time, setTime] = useState(() => timeText(venueNow()));
   const [live, setLive] = useState(true);
   const [search, setSearch] = useState('');
   const [data, setData] = useState(dashboard);
   const [successModal, setSuccessModal] = useState<BookingSuccessInfo | null>(null);
-  const viewedAt = live ? venueNow(demoClock) : new Date(`${date}T${time || '06:00'}:00`);
+  const viewedAt = live ? venueNow() : new Date(`${date}T${time || '06:00'}:00`);
 
   // Polling tự động cập nhật bản đồ sân thời gian thực mỗi 5 giây theo yêu cầu phi chức năng mục 6.4
   useEffect(() => {
@@ -227,7 +226,7 @@ export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPagePro
         <section className="card" aria-label="Xem sân">
           <div className="fg">
             <div><label htmlFor="court-date">Ngày</label><input className="in" type="date" id="court-date" min={isStaff ? undefined : dayKey(new Date())} value={date} onChange={(event) => { setDate(event.target.value); setLive(false); }} /></div>
-            <div><label htmlFor="court-time">Giờ</label><div className="row-in"><input className="in" type="time" id="court-time" value={time} onChange={(event) => { setTime(event.target.value); setLive(false); }} /><button className="btn ghost sm" type="button" onClick={() => { const now = venueNow(demoClock); setDate(dayKey(now)); setTime(timeText(now)); setLive(true); }}>Bây giờ</button></div></div>
+            <div><label htmlFor="court-time">Giờ</label><div className="row-in"><input className="in" type="time" id="court-time" value={time} onChange={(event) => { setTime(event.target.value); setLive(false); }} /><button className="btn ghost sm" type="button" onClick={() => { const now = venueNow(); setDate(dayKey(now)); setTime(timeText(now)); setLive(true); }}>Bây giờ</button></div></div>
           </div>
           <p className="hint" style={{ margin: '8px 0 12px' }}>
             <span className={`tag ${live ? 't-ok' : 't-am'}`}>{live ? 'Thời gian thực' : `Đang xem ${time} · ${dateText(`${date}T00:00:00`)}`}</span>

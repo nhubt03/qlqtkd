@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import type { Role, User } from '../../types';
-import { venueNow } from '../../utils/time';
 
 export type PageId = 'san' | 'goi' | 'hv' | 'lop' | 'khach' | 'doanh' | 'cauhinh';
 
@@ -38,22 +37,19 @@ interface HeaderProps {
   user: User;
   activePage: PageId;
   theme: 'light' | 'dark' | 'system';
-  demoClock: boolean;
   onThemeChange: (theme: 'light' | 'dark' | 'system') => void;
   onNavigate: (page: PageId) => void;
-  onUseRealTime: () => void;
   onLogout: () => void;
   onAccount: () => void;
   onNotifications: () => void;
 }
 
-export function Header({ user, activePage, theme, demoClock, onThemeChange, onNavigate, onUseRealTime, onLogout, onAccount, onNotifications }: HeaderProps) {
-  const [time, setTime] = useState(() => venueNow(demoClock));
+export function Header({ user, activePage, theme, onThemeChange, onNavigate, onLogout, onAccount, onNotifications }: HeaderProps) {
+  const [time, setTime] = useState(() => new Date());
   useEffect(() => {
-    setTime(venueNow(demoClock));
-    const timer = window.setInterval(() => setTime(venueNow(demoClock)), 1000);
+    const timer = window.setInterval(() => setTime(new Date()), 1000);
     return () => window.clearInterval(timer);
-  }, [demoClock]);
+  }, []);
 
   const toggleTheme = () => onThemeChange(theme === 'light' ? 'dark' : theme === 'dark' ? 'system' : 'light');
 
@@ -66,7 +62,6 @@ export function Header({ user, activePage, theme, demoClock, onThemeChange, onNa
               <Paddle />
               <div><b>PingPongBros</b><span>Câu lạc bộ bóng bàn</span></div>
             </div>
-            {demoClock && <button className="btn sm ghost real-clock" type="button" title="Đang chạy giờ demo trong giờ mở cửa" onClick={onUseRealTime}>Giờ demo · dùng giờ thực</button>}
             <button className="btn sm ghost theme-toggle" type="button" onClick={toggleTheme} title="Chuyển Light/Dark mode">
               {theme === 'dark' ? 'Dark' : theme === 'light' ? 'Light' : 'Auto'}
             </button>

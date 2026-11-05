@@ -7,7 +7,6 @@ import { CourtPage } from './pages/CourtPage';
 import { ManagementPage } from './pages/ManagementPage';
 import { ChatWidget } from './components/chatbot/ChatWidget';
 import { Modal } from './components/common/Modal';
-import { shouldUseDemoClock } from './utils/time';
 
 function App() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
@@ -33,7 +32,6 @@ function App() {
   });
 
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
-  const [demoClock, setDemoClock] = useState(shouldUseDemoClock);
   const [error, setError] = useState('');
   const [modal, setModal] = useState<{ title: string; content: string } | null>(null);
   const [notice, setNotice] = useState('');
@@ -127,10 +125,8 @@ function App() {
         user={user}
         activePage={activePage}
         theme={theme}
-        demoClock={demoClock}
         onThemeChange={setTheme}
         onNavigate={changePage}
-        onUseRealTime={() => setDemoClock(false)}
         onLogout={handleLogout}
         onAccount={() => setModal({ title: 'Tài khoản của tôi', content: `${user.name} · ${user.email} · ${user.phone}` })}
         onNotifications={() => setModal({ title: 'Thông báo', content: 'Chưa có thông báo mới.' })}
@@ -139,7 +135,7 @@ function App() {
         <div className="wrap">
           <div id="alerts" aria-live="polite">{notice && <div className="alert info" role="status"><span>{notice}</span><button className="btn sm ghost" onClick={() => setNotice('')}>Đóng</button></div>}</div>
           {activePage === 'san' ? (
-            <CourtPage dashboard={dashboard} user={user} demoClock={demoClock} onNotify={setNotice} />
+            <CourtPage dashboard={dashboard} user={user} onNotify={setNotice} />
           ) : (
             <ManagementPage
               page={activePage}
