@@ -25,3 +25,4 @@ services:
         value: jsme bbvn aosx hpau
       - key: SMTP_FROM
         value: PingPongBros Club <pingpongbros.club@gmail.com>
+
