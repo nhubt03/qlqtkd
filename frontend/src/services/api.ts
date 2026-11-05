@@ -6,6 +6,15 @@ const api = axios.create({
   timeout: 8000,
 });
 
+// Đính kèm token xác thực vào mọi request nếu có trong localStorage
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('pingpongbros_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 export async function fetchDashboard(): Promise<DashboardResponse> {
   const { data } = await api.get<DashboardResponse>('/dashboard');
   return data;
@@ -13,6 +22,9 @@ export async function fetchDashboard(): Promise<DashboardResponse> {
 
 export async function login(email: string, password: string): Promise<{ user: User; token: string }> {
   const { data } = await api.post<{ user: User; token: string }>('/auth/login', { email, password });
+  if (data.token) {
+    localStorage.setItem('pingpongbros_token', data.token);
+  }
   return data;
 }
 
@@ -59,8 +71,9 @@ export async function rejectClass(classId: number): Promise<void> {
   await api.post(`/classes/${classId}/reject`);
 }
 
-export async function renewMember(memberId: number, packageId: string): Promise<void> {
-  await api.post(`/members/${memberId}/renew`, { packageId });
+export async function renewMember(memberId: number, packageId: string): Promise<any> {
+  const { data } = await api.post(`/members/${memberId}/renew`, { packageId });
+  return data;
 }
 
 export async function createWaitlist(input: {

@@ -11,8 +11,27 @@ import { shouldUseDemoClock } from './utils/time';
 
 function App() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [activePage, setActivePage] = useState<PageId>('san');
+
+  // Khôi phục phiên đăng nhập từ localStorage để tránh bị văng ra trang Login khi F5 / Reload
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const stored = localStorage.getItem('pingpongbros_user');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Khôi phục trang đang xem từ localStorage
+  const [activePage, setActivePage] = useState<PageId>(() => {
+    try {
+      const stored = localStorage.getItem('pingpongbros_page') as PageId | null;
+      return stored || 'san';
+    } catch {
+      return 'san';
+    }
+  });
+
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   const [demoClock, setDemoClock] = useState(shouldUseDemoClock);
   const [error, setError] = useState('');
@@ -33,14 +52,22 @@ function App() {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
-  // Thông báo theo quy định chỉ được đóng khi người dùng click vào nút "Đóng", không dùng timer tự tắt
-
+  // Đảm bảo activePage phù hợp với quyền hạn của user
+  useEffect(() => {
+    if (user && !menus[user.role]?.some(([id]) => id === activePage)) {
+      setActivePage('san');
+      localStorage.setItem('pingpongbros_page', 'san');
+    }
+  }, [user, activePage]);
 
   const handleLogin = async (identifier: string, password: string) => {
     try {
       const { user: authenticatedUser } = await login(identifier, password);
+      // Lưu phiên đăng nhập vào localStorage
+      localStorage.setItem('pingpongbros_user', JSON.stringify(authenticatedUser));
       setUser(authenticatedUser);
       setActivePage('san');
+      localStorage.setItem('pingpongbros_page', 'san');
       setError('');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Đăng nhập thất bại.');
@@ -48,8 +75,19 @@ function App() {
     }
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('pingpongbros_user');
+    localStorage.removeItem('pingpongbros_token');
+    localStorage.removeItem('pingpongbros_page');
+    setUser(null);
+    setActivePage('san');
+  };
+
   const changePage = (page: PageId) => {
-    if (!user || menus[user.role].some(([id]) => id === page)) setActivePage(page);
+    if (!user || menus[user.role]?.some(([id]) => id === page)) {
+      setActivePage(page);
+      localStorage.setItem('pingpongbros_page', page);
+    }
   };
 
   if (!dashboard) {
@@ -93,10 +131,7 @@ function App() {
         onThemeChange={setTheme}
         onNavigate={changePage}
         onUseRealTime={() => setDemoClock(false)}
-        onLogout={() => {
-          setUser(null);
-          setActivePage('san');
-        }}
+        onLogout={handleLogout}
         onAccount={() => setModal({ title: 'Tài khoản của tôi', content: `${user.name} · ${user.email} · ${user.phone}` })}
         onNotifications={() => setModal({ title: 'Thông báo', content: 'Chưa có thông báo mới.' })}
       />
