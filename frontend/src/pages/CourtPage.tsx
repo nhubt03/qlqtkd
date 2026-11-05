@@ -141,6 +141,88 @@ export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPagePro
         </div>
       </div>
 
+      {/* QUẢNG CÁO GÓI THÁNG DÀNH CHO KHÁCH VÃNG LAI (THEO ĐẶC TẢ NGHIỆP VỤ) */}
+      {user.role === 'GUEST' && (
+        <section className="card" style={{ marginBottom: 16, background: 'linear-gradient(135deg, #0d3b66, #1d4ba8)', color: '#fff', borderRadius: 12, padding: '18px 20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
+            <div>
+              <span className="tag" style={{ background: '#f39c12', color: '#fff', fontWeight: 'bold', marginBottom: 4 }}>ƯU ĐÃI HỘI VIÊN</span>
+              <h3 style={{ margin: '4px 0', fontSize: 18, color: '#fff' }}>Đăng ký Gói Tháng - Tiết kiệm đến 40% chi phí chơi bóng bàn!</h3>
+              <p style={{ margin: 0, fontSize: 13, opacity: 0.9 }}>
+                Khách tháng không cần thanh toán lẻ từng lần chơi, được ưu tiên giữ bàn và tự do chơi theo lượt linh hoạt.
+              </p>
+            </div>
+            <button className="btn" style={{ background: '#e74c3c', color: '#fff', border: 'none', padding: '8px 16px', fontWeight: 'bold' }} type="button" onClick={() => onNotify('Vui lòng gặp nhân viên quầy hoặc liên hệ Hotline 0918 901 284 để đăng ký gói tháng!')}>
+              Đăng ký ngay tại quầy
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+            <div style={{ background: 'rgba(255,255,255,0.12)', padding: '12px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.2)' }}>
+              <div style={{ fontWeight: 'bold', fontSize: 15 }}>Gói Tháng P1 (30 Lượt)</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#f1c40f', margin: '4px 0' }}>900.000 đ</div>
+              <small style={{ opacity: 0.85, fontSize: 11 }}>• 30 lượt / 30 ngày (30k/lượt 2h)<br />• Tiết kiệm 25% so với vé lẻ</small>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.18)', padding: '12px 14px', borderRadius: 8, border: '1px solid #f1c40f' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ fontWeight: 'bold', fontSize: 15 }}>Gói Tháng P3 (90 Lượt)</span>
+                <span className="tag" style={{ background: '#f1c40f', color: '#000', fontSize: 10, fontWeight: 'bold' }}>PHỔ BIẾN</span>
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#f1c40f', margin: '4px 0' }}>2.400.000 đ</div>
+              <small style={{ opacity: 0.85, fontSize: 11 }}>• 90 lượt / 90 ngày (26k/lượt 2h)<br />• Tiết kiệm 35% chi phí</small>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.12)', padding: '12px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.2)' }}>
+              <div style={{ fontWeight: 'bold', fontSize: 15 }}>Gói VIP P6 (180 Lượt)</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#f1c40f', margin: '4px 0' }}>4.500.000 đ</div>
+              <small style={{ opacity: 0.85, fontSize: 11 }}>• 180 lượt / 180 ngày (25k/lượt 2h)<br />• Ưu tiên chọn bàn đẹp</small>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* THÔNG TIN CHI TIẾT GÓI THÁNG DÀNH CHO KHÁCH THÁNG (THEO ĐẶC TẢ NGHIỆP VỤ BR07, BR08) */}
+      {user.role === 'MEMBER' && (() => {
+        const mem = data.members.find((m) => m.id === user.memberId || m.phone === user.phone || m.email === user.email);
+        if (!mem) return null;
+        const leftTurns = mem.totalTurns - mem.usedTurns;
+        const isExpiring = leftTurns <= 5;
+        const packName = mem.packageType === 'p6' ? 'Gói VIP 6 Tháng (180 lượt)' : mem.packageType === 'p3' ? 'Gói Nâng Cao 3 Tháng (90 lượt)' : 'Gói Tháng Cơ Bản P1 (30 lượt)';
+        return (
+          <section className="card" style={{ marginBottom: 16, background: '#f8fafc', border: isExpiring ? '2px solid #e67e22' : '1px solid #cbd5e1', borderRadius: 10, padding: '16px 20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <h3 style={{ margin: 0, fontSize: 17, color: '#0f172a' }}>Thông tin gói tháng của bạn: {packName}</h3>
+                  <span className={`tag ${leftTurns === 0 ? 't-rd' : isExpiring ? 't-am' : 't-ok'}`}>
+                    {leftTurns === 0 ? 'Hết lượt' : isExpiring ? 'Sắp hết lượt' : 'Đang hoạt động'}
+                  </span>
+                </div>
+                <p style={{ margin: '4px 0 0', fontSize: 13, color: '#475569' }}>
+                  Hội viên: <b>{mem.name}</b> ({mem.phone}) · Hạn sử dụng: <b>{new Date(mem.startDate).toLocaleDateString('vi-VN')} – {new Date(mem.endDate).toLocaleDateString('vi-VN')}</b>
+                </p>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: 12, color: '#64748b' }}>Lượt chơi còn lại:</span>
+                <div style={{ fontSize: 26, fontWeight: 900, color: leftTurns === 0 ? '#dc2626' : isExpiring ? '#d97706' : '#16a34a' }}>
+                  {leftTurns} <span style={{ fontSize: 14, fontWeight: 'normal', color: '#64748b' }}>/ {mem.totalTurns} lượt</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Cảnh báo BR08 khi còn dưới 5 lượt */}
+            {isExpiring && (
+              <div style={{ marginTop: 12, padding: '10px 14px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: 6, fontSize: 13, color: '#92400e', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                <div>
+                  ⚠️ <b>Nhắc nhở hội viên (BR08):</b> Gói của bạn chỉ còn <b>{leftTurns} lượt chơi</b>! Vui lòng liên hệ nhân viên quầy để gia hạn cộng dồn lượt trước khi hết hạn.
+                </div>
+                <button className="btn sm" style={{ background: '#d97706', color: '#fff', border: 'none' }} type="button" onClick={() => onNotify('Vui lòng gặp nhân viên quầy để được hỗ trợ gia hạn cộng dồn số lượt còn lại!')}>
+                  Gia hạn ngay tại quầy
+                </button>
+              </div>
+            )}
+          </section>
+        );
+      })()}
+
       <div className="two">
         <section className="card" aria-label="Xem sân">
           <div className="fg">

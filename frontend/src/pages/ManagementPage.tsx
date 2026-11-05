@@ -76,6 +76,23 @@ function MemberHome({ member, config }: { member?: Member; config: DashboardResp
 
 function ClassesPage({ dashboard, onNotify }: { dashboard: DashboardResponse; onNotify: (message: string) => void }) {
   const [classesList, setClassesList] = useState(dashboard.classes);
+  const teacherStats = useMemo(() => {
+    const stats: Record<string, { teacherName: string; approvedSessions: number; totalPay: number }> = {};
+    const pricePerSession = dashboard.config.teacherPrice || 250000;
+
+    classesList.forEach((c) => {
+      if (c.status === 'approved') {
+        if (!stats[c.teacherName]) {
+          stats[c.teacherName] = { teacherName: c.teacherName, approvedSessions: 0, totalPay: 0 };
+        }
+        stats[c.teacherName].approvedSessions += 1;
+        stats[c.teacherName].totalPay += pricePerSession;
+      }
+    });
+
+    return Object.values(stats);
+  }, [classesList, dashboard.config.teacherPrice]);
+
   const rows = [...classesList].sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || a.date.localeCompare(b.date) || a.startHour - b.startHour);
 
   const handleApprove = async (id: number) => {
@@ -147,6 +164,63 @@ function ClassesPage({ dashboard, onNotify }: { dashboard: DashboardResponse; on
             ))}
           </tbody>
         </table>
+      </section>
+
+      {/* TỔNG HỢP THÙ LAO GIÁO VIÊN CUỐI THÁNG (THEO QUY ĐỊNH FR17 & BR10) */}
+      <section className="card" style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Tổng hợp thù lao Giáo viên (FR17 - Chi trả cuối tháng)</h3>
+            <p className="hint" style={{ margin: '4px 0 0' }}>
+              Quy định thù lao: <b>{money(dashboard.config.teacherPrice || 250000)} / buổi dạy 2 giờ</b>. Hệ thống tự động chốt số liệu vào 23:59 ngày cuối tháng để Quản lý chi trả.
+            </p>
+          </div>
+          <span className="tag t-bl">Chốt 23:59 cuối tháng</span>
+        </div>
+
+        <div className="ovf" style={{ marginTop: 8 }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Giáo viên / Huấn luyện viên</th>
+                <th className="num">Số lớp đã duyệt</th>
+                <th className="num">Đơn giá / buổi</th>
+                <th className="num">Tổng thù lao nhận</th>
+                <th>Trạng thái chi trả</th>
+              </tr>
+            </thead>
+            <tbody>
+              {teacherStats.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ textAlign: 'center', color: '#64748b' }}>Chưa có lớp học nào được duyệt trong kỳ.</td>
+                </tr>
+              ) : (
+                teacherStats.map((t) => (
+                  <tr key={t.teacherName}>
+                    <td><b>{t.teacherName}</b></td>
+                    <td className="num">{t.approvedSessions} buổi</td>
+                    <td className="num">{money(dashboard.config.teacherPrice || 250000)}</td>
+                    <td className="num" style={{ fontWeight: 'bold', color: '#16a34a' }}>{money(t.totalPay)}</td>
+                    <td><span className="tag t-ok">Sẵn sàng quyết toán</span></td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+            {teacherStats.length > 0 && (
+              <tfoot>
+                <tr style={{ background: '#f8fafc', fontWeight: 'bold' }}>
+                  <td>TỔNG CỘNG TOÀN CLB</td>
+                  <td className="num">{teacherStats.reduce((s, i) => s + i.approvedSessions, 0)} buổi</td>
+                  <td className="num">—</td>
+                  <td className="num" style={{ color: '#dc2626', fontSize: 15 }}>
+                    {money(teacherStats.reduce((s, i) => s + i.totalPay, 0))}
+                  </td>
+                  <td>—</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
       </section>
     </>
   );
