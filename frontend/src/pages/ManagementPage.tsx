@@ -734,9 +734,7 @@ function SettingsPage({ dashboard, user, onNotify }: { dashboard: DashboardRespo
   const [classCutoffHour, setClassCutoffHour] = useState(config.classCutoffHour || 19);
   const [saving, setSaving] = useState(false);
 
-  const [logs, setLogs] = useState<AuditLog[]>([
-    { id: 1, user: 'Hệ thống', action: 'Khởi tạo cấu hình ban đầu', oldVal: '—', newVal: 'Giá: 20k/h · Giữ bàn: 15p · GV: 250k', time: new Date().toLocaleTimeString('vi-VN') },
-  ]);
+  const [logs, setLogs] = useState<AuditLog[]>([]);
 
   const handleSaveConfig = async () => {
     setSaving(true);

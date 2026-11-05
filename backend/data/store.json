@@ -7,39 +7,9 @@
       "phone": "0905123456",
       "password": "admin123",
       "role": "MANAGER"
-    },
-    {
-      "id": 2,
-      "name": "NGUYEN VAN A",
-      "phone": "0987654321",
-      "email": "nhanvien1@gmail.com",
-      "password": "scrypt$5f60df9f122e17483b5792c4421fbfd8$fe0f4220e6960924493e17ddd2b8899201f1fcead6ae39c284fbc5bc9add710301ed57939d7eca935f59542cb8a10994c24f16894e21879589ddf3e064724cc3",
-      "role": "STAFF"
-    },
-    {
-      "id": 3,
-      "name": "NGUYEN VAN B",
-      "email": "nikhai042@gmail.com",
-      "phone": "0987654321",
-      "password": "scrypt$ed3455f6cd84ea5c21a0348ed16df81c$93b519c54635b75bdf9d2d80b50b7f556f464ad3df736b37f7348f1fd230b17650c8985b8573398089fd628696df4251f8514e6da9d4dcd7fc4386ba804d2fb3",
-      "role": "MEMBER",
-      "memberId": 1
     }
   ],
-  "members": [
-    {
-      "id": 1,
-      "name": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "packageType": "p1",
-      "startDate": "2026-11-05T12:11:42.069Z",
-      "endDate": "2026-12-05T12:11:42.069Z",
-      "totalTurns": 30,
-      "usedTurns": 0,
-      "status": "active"
-    }
-  ],
+  "members": [],
   "tables": [
     {
       "id": 1,
@@ -154,243 +124,9 @@
       "status": "available"
     }
   ],
-  "bookings": [
-    {
-      "id": 1,
-      "tableId": 5,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 2,
-      "tableId": 6,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 3,
-      "tableId": 7,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 4,
-      "tableId": 8,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 5,
-      "tableId": 9,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 6,
-      "tableId": 10,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 7,
-      "tableId": 11,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 8,
-      "tableId": 12,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 9,
-      "tableId": 13,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 10,
-      "tableId": 14,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 11,
-      "tableId": 15,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 12,
-      "tableId": 16,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 13,
-      "tableId": 1,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 14,
-      "tableId": 2,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 15,
-      "tableId": 3,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    },
-    {
-      "id": 16,
-      "tableId": 4,
-      "customerName": "NGUYEN VAN B",
-      "phone": "0987654321",
-      "email": "nikhai042@gmail.com",
-      "type": "WALK_IN",
-      "startTime": "2026-11-05T12:30:00.000Z",
-      "duration": 1,
-      "people": 2,
-      "status": "CONFIRMED",
-      "amount": 40000,
-      "memberId": null
-    }
-  ],
+  "bookings": [],
   "classes": [],
-  "payments": [
-    {
-      "id": 1,
-      "type": "goi",
-      "amount": 449000,
-      "reference": "Đăng ký mới Gói 1 tháng · NGUYEN VAN B (0987654321)",
-      "who": "Quản Trị Viên (Admin)",
-      "createdAt": "2026-11-05T12:11:42.069Z"
-    }
-  ],
+  "payments": [],
   "config": {
     "courtPrice": 20000,
     "teacherPrice": 250000,
@@ -402,5 +138,11 @@
     "classCutoffHour": 19,
     "alertMinutes": 30
   },
-  "savedAt": "2026-11-05T12:11:42.069Z"
+  "stats": {
+    "totalRevenue": 0,
+    "todayBookings": 0,
+    "activeMembers": 0,
+    "classesPending": 0
+  },
+  "savedAt": "2026-11-05T12:48:00.000Z"
 }
