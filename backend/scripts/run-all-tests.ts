@@ -112,18 +112,19 @@ async function runAllTests() {
     }
 
     {
-      // TC-03: Đăng nhập bằng số điện thoại
+      // TC-03: Chặn đăng nhập bằng số điện thoại - Hệ thống chỉ chấp nhận Email
       const res = await request(server, 'POST', '/api/dang-nhap', {
         sdt: '0905123456',
         password: 'password123',
       });
+      const isBlocked = res.status === 400 && res.body?.message?.includes('Email');
       results.push({
         id: 'TC-03',
         category: 'Xác thực',
-        requirement: 'FR01',
-        description: 'Đăng nhập bằng số điện thoại (0905123456)',
-        status: res.status === 200 && res.body?.ok === true ? 'PASS' : 'FAIL',
-        detail: `Status: ${res.status}, Name: ${res.body?.user?.name}`,
+        requirement: 'FR01, Chỉ Email',
+        description: 'Chặn đăng nhập bằng số điện thoại, chỉ hỗ trợ Email',
+        status: isBlocked ? 'PASS' : 'FAIL',
+        detail: `Status: ${res.status}, Error: ${res.body?.message}`,
       });
     }
 

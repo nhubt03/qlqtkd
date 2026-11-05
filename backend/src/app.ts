@@ -32,13 +32,26 @@ app.get('/api/dashboard', (_req, res) => {
 // ==========================================
 const handleLogin = (req: express.Request, res: express.Response) => {
   const { email, password, sdt } = req.body ?? {};
-  const cleaned = String(email || sdt || '').toLowerCase().trim();
 
-  // Tìm người dùng trong danh sách hoặc khớp tài khoản Admin hệ thống
+  // Chặn đăng nhập bằng số điện thoại
+  const inputEmail = String(email || '').trim();
+  if (!inputEmail && sdt) {
+    return res.status(400).json({ message: 'Hệ thống chỉ hỗ trợ đăng nhập bằng địa chỉ Email. Vui lòng nhập email.' });
+  }
+
+  const cleaned = inputEmail.toLowerCase();
+  if (/^[0-9+]+$/.test(cleaned)) {
+    return res.status(400).json({ message: 'Vui lòng nhập địa chỉ Email để đăng nhập, không sử dụng số điện thoại.' });
+  }
+
+  if (!cleaned) {
+    return res.status(400).json({ message: 'Vui lòng nhập địa chỉ Email đăng nhập.' });
+  }
+
+  // Tìm người dùng trong danh sách chỉ theo Email (hoặc alias admin)
   let user = dashboardData.users.find(
     (item) =>
       item.email.toLowerCase() === cleaned ||
-      item.phone === cleaned ||
       (item.role === 'MANAGER' && (cleaned === 'admin' || cleaned === 'admin@pingpongbros.vn' || cleaned === 'quanly@pingpongbros.vn'))
   );
 

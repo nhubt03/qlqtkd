@@ -46,23 +46,21 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
     event.preventDefault();
     setFormError('');
 
-    const trimmedId = identifier.trim();
-    if (!trimmedId) {
-      setFormError('Vui lòng nhập Email hoặc Số điện thoại đăng nhập.');
+    const trimmedEmail = identifier.trim();
+    if (!trimmedEmail) {
+      setFormError('Vui lòng nhập địa chỉ Email đăng nhập.');
       return;
     }
 
-    const isPhoneLike = /^[0-9+]+$/.test(trimmedId);
-    if (isPhoneLike) {
-      if (!isValidVietnamPhone(trimmedId)) {
-        setFormError('Số điện thoại không đúng chuẩn di động Việt Nam (10 số, bắt đầu 03, 05, 07, 08, 09).');
-        return;
-      }
-    } else {
-      if (!isValidEmail(trimmedId)) {
-        setFormError('Email đăng nhập không đúng định dạng (ví dụ: ten@pingpongbros.vn).');
-        return;
-      }
+    // Chặn hoàn toàn số điện thoại
+    if (/^[0-9+]+$/.test(trimmedEmail)) {
+      setFormError('Hệ thống chỉ cho phép đăng nhập bằng địa chỉ Email, không hỗ trợ đăng nhập bằng số điện thoại.');
+      return;
+    }
+
+    if (!isValidEmail(trimmedEmail) && trimmedEmail.toLowerCase() !== 'admin') {
+      setFormError('Email đăng nhập không đúng định dạng (ví dụ: admin@pingpongbros.vn).');
+      return;
     }
 
     if (!password) {
@@ -72,7 +70,7 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
 
     setSubmitting(true);
     try {
-      await onLogin(trimmedId, password);
+      await onLogin(trimmedEmail, password);
     } catch {
       // The API error is shown by the parent.
     } finally {
@@ -235,19 +233,20 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
             <form onSubmit={submitLogin} noValidate className="auth-form">
               <div className="auth-header">
                 <h3>Đăng Nhập Hệ Thống</h3>
-                <p>Nhập email hoặc số điện thoại để tiếp tục</p>
+                <p>Nhập địa chỉ email của bạn để tiếp tục</p>
               </div>
 
               <div className="auth-fields">
                 <div className="field-group">
-                  <label htmlFor="login-id">Email hoặc Số điện thoại</label>
+                  <label htmlFor="login-id">Địa chỉ Email</label>
                   <div className="input-with-icon">
-                    <span className="input-icon">👤</span>
+                    <span className="input-icon">✉️</span>
                     <input
                       className="auth-input"
                       id="login-id"
-                      autoComplete="username"
-                      placeholder="admin@pingpongbros.vn hoặc 0905123456"
+                      type="email"
+                      autoComplete="email"
+                      placeholder="admin@pingpongbros.vn"
                       value={identifier}
                       onChange={(e) => setIdentifier(e.target.value)}
                     />
