@@ -130,9 +130,16 @@ app.post(['/api/dang-ky', '/api/auth/register'], (req, res) => {
     return res.status(400).json({ message: 'Vui lòng cung cấp họ tên và số điện thoại.' });
   }
 
+  const cleanEmail = email ? String(email).toLowerCase().trim() : '';
+  const cleanPhone = String(sdt).trim();
+
+  // Kiểm tra trùng lặp email nếu có
+  if (cleanEmail && dashboardData.users.some((u) => u.email && u.email.toLowerCase() === cleanEmail)) {
+    return res.status(400).json({ message: 'Địa chỉ email này đã được sử dụng. Vui lòng đăng nhập hoặc dùng email khác.' });
+  }
+
   // Nếu người dùng có nhập email -> Bắt buộc xác thực mã OTP
-  if (email && String(email).trim().length > 0) {
-    const cleanEmail = String(email).toLowerCase().trim();
+  if (cleanEmail.length > 0) {
     const stored = otpStore.get(cleanEmail);
 
     if (!stored || stored.otp !== String(otp || '').trim() || Date.now() > stored.expiresAt) {
@@ -213,7 +220,9 @@ const handleBookingCreation = (req: express.Request, res: express.Response) => {
 
   // Chặn khách tháng hết lượt
   if (bookingType === 'MEMBER') {
-    const member = dashboardData.members.find((m) => m.id === body.memberId || m.phone === body.phone);
+    const member = body.memberId
+      ? dashboardData.members.find((m) => m.id === body.memberId)
+      : dashboardData.members.find((m) => m.phone === body.phone);
     if (member) {
       const leftTurns = member.totalTurns - member.usedTurns;
       if (leftTurns <= 0) {
@@ -348,7 +357,9 @@ const handleCheckOut = (req: express.Request, res: express.Response) => {
       createdAt: new Date().toISOString(),
     });
   } else if (booking.type === 'MEMBER') {
-    const member = dashboardData.members.find((m) => m.id === booking.memberId || m.phone === booking.phone);
+    const member = booking.memberId
+      ? dashboardData.members.find((m) => m.id === booking.memberId)
+      : dashboardData.members.find((m) => m.phone === booking.phone);
     if (member) {
       // Quy tắc đặc tả: Mặc định 2 giờ/lượt, quá giờ tính thêm lượt (VD: 3h tính 2 lượt)
       const turnsToDeduct = Math.max(1, Math.ceil(booking.duration / 2));
@@ -557,9 +568,19 @@ const handleActivateMember = (req: express.Request, res: express.Response) => {
   dashboardData.members.push(newMember);
 
   // Tự động tìm và nâng cấp tài khoản người dùng thành MEMBER
-  const matchedUser = dashboardData.users.find(
-    (u) => (cleanEmail && u.email.toLowerCase() === cleanEmail) || u.phone === cleanPhone
-  );
+  // Ưu tiên 1: Khớp chính xác theo Email (dành cho tài khoản khách hàng GUEST)
+  let matchedUser = cleanEmail
+    ? dashboardData.users.find((u) => u.email.toLowerCase() === cleanEmail && (u.role === 'GUEST' || u.role === 'MEMBER'))
+    : undefined;
+
+  // Ưu tiên 2: Nếu chưa tìm thấy theo email, tìm theo SĐT nhưng CHỈ áp dụng cho tài khoản khách (GUEST / MEMBER)
+  // Tuyệt đối không bao giờ ghi đè hoặc hạ cấp tài khoản Nhân viên (STAFF) hoặc Quản lý (MANAGER)
+  if (!matchedUser) {
+    matchedUser = dashboardData.users.find(
+      (u) => u.phone === cleanPhone && (u.role === 'GUEST' || u.role === 'MEMBER')
+    );
+  }
+
   if (matchedUser) {
     matchedUser.role = 'MEMBER';
     matchedUser.memberId = newMemberId;

@@ -78,6 +78,9 @@ async function runAllTests() {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 
   try {
+    // Đảm bảo môi trường kiểm thử hoàn toàn độc lập, xóa bỏ booking tạm thời trước khi test
+    dashboardData.bookings = [];
+
     // -------------------------------------------------------------
     // NHÓM 1: XÁC THỰC & PHÂN QUYỀN (FR01, AUTH & RBAC)
     // -------------------------------------------------------------
@@ -262,9 +265,9 @@ async function runAllTests() {
     // -------------------------------------------------------------
     // NHÓM 3: NGHIỆP VỤ KHÁCH THÁNG (BR07, BR08, BR09 - ƯU TIÊN 1)
     // -------------------------------------------------------------
-    // Khởi tạo context hội viên cho các test case khách tháng
-    if (!dashboardData.members.some((m) => m.id === 1)) {
-      dashboardData.members.push({
+    // Khởi tạo context hội viên cô lập cho các test case khách tháng
+    dashboardData.members = [
+      {
         id: 1,
         name: 'Nguyễn Văn An',
         phone: '0912345678',
@@ -275,13 +278,11 @@ async function runAllTests() {
         totalTurns: 30,
         usedTurns: 26,
         status: 'active',
-      });
-    }
-    if (!dashboardData.members.some((m) => m.id === 3)) {
-      dashboardData.members.push({
+      },
+      {
         id: 3,
         name: 'Lê Quốc Cường',
-        phone: '0987654321',
+        phone: '0934567890',
         email: 'cuong.le@gmail.com',
         packageType: 'p1',
         startDate: new Date(Date.now() - 25 * 86400000).toISOString(),
@@ -289,8 +290,8 @@ async function runAllTests() {
         totalTurns: 30,
         usedTurns: 30,
         status: 'warning',
-      });
-    }
+      },
+    ];
 
     {
       // TC-09: Khách tháng còn lượt đặt bàn -> Thành công, số tiền = 0
@@ -323,7 +324,7 @@ async function runAllTests() {
       const res = await request(server, 'POST', '/api/bookings', {
         tableId: 9,
         memberId: 3,
-        phone: '0987654321',
+        phone: '0934567890',
         customerName: 'Lê Quốc Cường',
         type: 'MEMBER',
         startTime: new Date().toISOString(),
