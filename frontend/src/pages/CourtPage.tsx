@@ -271,12 +271,53 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
   const [submitting, setSubmitting] = useState(false);
   const [noTableWarning, setNoTableWarning] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
+  const [forceWalkIn, setForceWalkIn] = useState(false);
+
+  // Kiểm tra thông tin gói của khách tháng
+  const memberInfo = dashboard.members.find((m) => m.id === user.memberId || m.phone === user.phone);
+  const leftTurns = memberInfo ? Math.max(0, memberInfo.totalTurns - memberInfo.usedTurns) : 0;
+  const isMemberExpired = user.role === 'MEMBER' && !forceWalkIn && leftTurns <= 0;
+  const estimatedTurns = Math.max(1, Math.ceil(duration / 2));
+
+  const isWalkIn = user.role !== 'MEMBER' || forceWalkIn;
   const cost = people * duration * dashboard.config.courtPrice;
   const endTime = (() => {
     const [hour, minute] = startTime.split(':').map(Number);
     const total = hour * 60 + minute + duration * 60;
     return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
   })();
+
+  // Kiểm tra bàn có trống trong khoảng thời gian [start, start + duration]
+  const isTableAvailable = (tableNumber: number, targetDate: string, targetTime: string, dur: number): boolean => {
+    const reqStart = new Date(`${targetDate}T${targetTime}:00`).getTime();
+    const reqEnd = reqStart + dur * 3600000;
+    const startH = new Date(`${targetDate}T${targetTime}:00`).getHours();
+
+    // Bàn khu dạy học (1-4) chỉ mở cho khách sau 19:00
+    if (tableNumber >= 1 && tableNumber <= 4 && startH < dashboard.config.classCutoffHour) {
+      return false;
+    }
+
+    // 1. Kiểm tra trùng booking khác
+    const hasBookingConflict = dashboard.bookings.some((b) => {
+      if (b.tableId !== tableNumber) return false;
+      if (['CANCELLED', 'CHECKED_OUT'].includes(b.status)) return false;
+      const bStart = new Date(b.startTime).getTime();
+      const bEnd = bStart + b.duration * 3600000;
+      return !(reqEnd <= bStart || reqStart >= bEnd);
+    });
+    if (hasBookingConflict) return false;
+
+    // 2. Kiểm tra trùng lớp học đã duyệt
+    const hasClassConflict = dashboard.classes.some((c) => {
+      if (c.status !== 'approved' || !c.tables.includes(tableNumber)) return false;
+      if (dayKey(new Date(c.date)) !== targetDate) return false;
+      const endH = startH + dur;
+      return !(endH <= c.startHour || startH >= c.endHour);
+    });
+
+    return !hasClassConflict;
+  };
 
   // AI-1: Đề xuất các khung giờ thay thế có bàn trống lân cận
   const findAlternativeHours = (targetDate: string, targetTime: string, dur: number): string[] => {
@@ -287,23 +328,7 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
     for (const h of candidates) {
       if (h >= dashboard.config.openingHour && h + dur <= dashboard.config.closingHour) {
         const timeStr = `${String(h).padStart(2, '0')}:00`;
-        const checkTime = new Date(`${targetDate}T${timeStr}:00`);
-        const busyTableIds = new Set(
-          dashboard.bookings
-            .filter((b) => {
-              if (!['PENDING', 'CONFIRMED', 'CHECKED_IN'].includes(b.status)) return false;
-              const bStart = new Date(b.startTime);
-              const bEnd = new Date(bStart.getTime() + b.duration * 3600000);
-              const checkEnd = new Date(checkTime.getTime() + dur * 3600000);
-              return !(checkEnd <= bStart || checkTime >= bEnd);
-            })
-            .map((b) => b.tableId)
-        );
-
-        const hasAvailable = dashboard.tables.some((t) => {
-          if (t.zone === 'teaching' && h < dashboard.config.classCutoffHour) return false;
-          return !busyTableIds.has(t.tableNumber);
-        });
+        const hasAvailable = dashboard.tables.some((t) => isTableAvailable(t.tableNumber, targetDate, timeStr, dur));
 
         if (hasAvailable && !availableHours.includes(timeStr)) {
           availableHours.push(timeStr);
@@ -321,6 +346,12 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
       onNotify(contactValidation.errors[0]);
       return;
     }
+
+    if (isMemberExpired) {
+      onNotify('Gói tháng của bạn đã hết lượt chơi. Hãy gia hạn gói hoặc chọn đặt dưới tư cách khách vãng lai.');
+      return;
+    }
+
     const errors: string[] = [];
     if (!bookingDate || !startTime) errors.push('Chọn ngày và giờ bắt đầu.');
     if (people < 1 || people > dashboard.config.maxPeoplePerTable) errors.push(`Mỗi bàn tối đa ${dashboard.config.maxPeoplePerTable} người.`);
@@ -334,12 +365,11 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
       return;
     }
 
-    const availableTable = dashboard.tables.find((table) => {
-      if (table.zone === 'teaching' && start.getHours() < dashboard.config.classCutoffHour) return false;
-      return table.status === 'available';
-    });
+    // Thuật toán tìm bàn trống chống trùng giờ: ưu tiên bàn 5-16 trước, sau 19h mới chọn 1-4
+    const candidateTableNumbers = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 1, 2, 3, 4];
+    const freeTableNumber = candidateTableNumbers.find((tNum) => isTableAvailable(tNum, bookingDate, startTime, duration));
 
-    if (!availableTable) {
+    if (!freeTableNumber) {
       const suggestions = findAlternativeHours(bookingDate, startTime, duration);
       setAiSuggestions(suggestions);
       setNoTableWarning(true);
@@ -349,21 +379,22 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
     setSubmitting(true);
     try {
       await createBooking({
-        tableId: availableTable.tableNumber,
+        tableId: freeTableNumber,
         customerName: name.trim(),
         phone,
         email,
-        type: user.role === 'MEMBER' ? 'MEMBER' : 'WALK_IN',
+        type: isWalkIn ? 'WALK_IN' : 'MEMBER',
         startTime: start.toISOString(),
         duration,
         people,
-        amount: user.role === 'MEMBER' ? 0 : cost,
-        memberId: user.memberId ?? null,
+        amount: isWalkIn ? cost : 0,
+        memberId: isWalkIn ? null : (user.memberId ?? null),
       });
       await onRefresh();
-      onNotify(`Đặt bàn thành công: Bàn ${availableTable.tableNumber} · ${bookingDate} ${startTime}.`);
-    } catch (reason) {
-      onNotify(reason instanceof Error ? reason.message : 'Không thể tạo lượt đặt.');
+      onNotify(`Đặt bàn thành công: Bàn ${freeTableNumber} · ${bookingDate} ${startTime} (${duration} giờ).`);
+    } catch (reason: any) {
+      const msg = reason?.response?.data?.message || (reason instanceof Error ? reason.message : 'Không thể tạo lượt đặt.');
+      onNotify(msg);
     } finally {
       setSubmitting(false);
     }
@@ -380,7 +411,7 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
         people,
         startTime: start.toISOString(),
         duration,
-        type: user.role === 'MEMBER' ? 'MEMBER' : 'WALK_IN',
+        type: isWalkIn ? 'WALK_IN' : 'MEMBER',
       });
       await onRefresh();
       setNoTableWarning(false);
@@ -395,7 +426,28 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
   return (
     <>
       <h3>Đặt bàn</h3>
-      <p className="hint" style={{ marginTop: 4 }}>Hệ thống tự phân bàn trống, bạn không cần chọn bàn. Mặc định chơi 2 giờ, tối đa {dashboard.config.maxPeoplePerTable} người mỗi bàn.</p>
+      <p className="hint" style={{ marginTop: 4 }}>
+        Hệ thống tự phân bàn trống chống trùng lịch. Mặc định chơi 2 giờ, tối đa {dashboard.config.maxPeoplePerTable} người mỗi bàn.
+      </p>
+
+      {/* Cảnh báo khi khách tháng hết 30 lượt */}
+      {isMemberExpired && (
+        <div className="alert" style={{ background: '#fdedec', borderColor: '#c0392b', color: '#922b21', margin: '12px 0', padding: 12, borderRadius: 8 }}>
+          <b>⚠️ Gói tháng của bạn đã hết lượt chơi (0/{memberInfo?.totalTurns} lượt)!</b>
+          <p style={{ margin: '6px 0 10px', fontSize: 13 }}>
+            Theo quy định, bạn không thể tiếp tục đặt bàn miễn phí bằng gói. Bạn có thể nhờ nhân viên gia hạn gói (cộng dồn lượt) hoặc đặt bàn theo chế độ khách vãng lai:
+          </p>
+          <button className="btn sm red" type="button" onClick={() => setForceWalkIn(true)}>
+            Chuyển sang đặt kiểu Khách vãng lai ({money(dashboard.config.courtPrice)}/người/giờ)
+          </button>
+        </div>
+      )}
+
+      {forceWalkIn && user.role === 'MEMBER' && (
+        <div style={{ padding: '6px 10px', background: '#fef9e7', border: '1px solid #f39c12', borderRadius: 6, margin: '8px 0', fontSize: 13, color: '#7d6608' }}>
+          Đang đặt dưới hình thức: <b>Khách vãng lai</b> (tính phí theo giờ). <button className="btn sm ghost" style={{ marginLeft: 8 }} onClick={() => setForceWalkIn(false)}>Hủy</button>
+        </div>
+      )}
 
       {noTableWarning && (
         <div className="alert" style={{ background: '#fdf2e9', borderColor: '#e08a3c', color: '#8a4b08', margin: '12px 0', padding: 12, borderRadius: 8 }}>
@@ -444,7 +496,11 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
           <div><label htmlFor="bk-dur">Thời lượng</label><select className="in" id="bk-dur" value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{[1, 1.5, 2, 2.5, 3, 3.5, 4].map((hours) => <option key={hours} value={hours}>{hours % 1 ? `${Math.floor(hours)} giờ 30` : `${hours} giờ`}</option>)}</select></div>
           <div><label>Giờ dự kiến kết thúc</label><div className="in ro">{endTime}</div></div>
           <div><label htmlFor="bk-people">Số người (tối đa 4)</label><select className="in" id="bk-people" value={people} onChange={(event) => setPeople(Number(event.target.value))}>{[1, 2, 3, 4].map((count) => <option key={count} value={count}>{count}</option>)}</select></div>
-          <div className="full hint">{user.role === 'MEMBER' ? 'Khách tháng: lượt sử dụng được ghi nhận theo gói, không thu tiền chơi.' : `Tạm tính: ${people} người × ${duration} × ${money(dashboard.config.courtPrice)} = ${money(cost)}`}</div>
+          <div className="full hint">
+            {!isWalkIn
+              ? `Khách tháng: Thời lượng ${duration} giờ sẽ tính ${estimatedTurns} lượt (còn lại ${leftTurns}/${memberInfo?.totalTurns ?? 30} lượt). Không thu tiền mặt.`
+              : `Tạm tính: ${people} người × ${duration} giờ × ${money(dashboard.config.courtPrice)} = ${money(cost)}`}
+          </div>
           <div className="full"><button className="btn red" style={{ width: '100%' }} type="submit" disabled={submitting}>{submitting ? 'Đang đặt...' : 'Đặt bàn'}</button></div>
         </div>
       </form>

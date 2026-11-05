@@ -72,27 +72,102 @@ app.get('/api/ban', (_req, res) => res.json(dashboardData.tables));
 app.get('/api/ban/ban-do', (_req, res) => res.json({ tables: dashboardData.tables, bookings: dashboardData.bookings, classes: dashboardData.classes }));
 
 // ==========================================
-// 3. ĐẶT BÀN
+// 3. ĐẶT BÀN & KIỂM TRA CHỐNG TRÙNG GIỜ
 // ==========================================
+export const isTableAvailableAtInterval = (tableNumber: number, startTimeStr: string, durationHours: number): boolean => {
+  const reqStart = new Date(startTimeStr).getTime();
+  const reqEnd = reqStart + durationHours * 3600000;
+  const reqDate = new Date(startTimeStr);
+  const startHour = reqDate.getHours() + reqDate.getMinutes() / 60;
+
+  // Bàn khu dạy học (1-4) chỉ mở cho khách sau classCutoffHour (19h)
+  const isTeachingZone = tableNumber >= 1 && tableNumber <= 4;
+  if (isTeachingZone && startHour < dashboardData.config.classCutoffHour) {
+    return false;
+  }
+
+  // 1. Kiểm tra xung đột với các booking khác (PENDING, CONFIRMED, CHECKED_IN)
+  const hasBookingConflict = dashboardData.bookings.some((b) => {
+    if (b.tableId !== tableNumber) return false;
+    if (['CANCELLED', 'CHECKED_OUT'].includes(b.status)) return false;
+    const bStart = new Date(b.startTime).getTime();
+    const bEnd = bStart + b.duration * 3600000;
+    return !(reqEnd <= bStart || reqStart >= bEnd);
+  });
+  if (hasBookingConflict) return false;
+
+  // 2. Kiểm tra xung đột với lớp học đã duyệt của giáo viên
+  const reqDateStr = reqDate.toDateString();
+  const hasClassConflict = dashboardData.classes.some((c) => {
+    if (c.status !== 'approved') return false;
+    if (!c.tables.includes(tableNumber)) return false;
+    if (new Date(c.date).toDateString() !== reqDateStr) return false;
+    const endHour = startHour + durationHours;
+    return !(endHour <= c.startHour || startHour >= c.endHour);
+  });
+
+  return !hasClassConflict;
+};
+
 const handleBookingCreation = (req: express.Request, res: express.Response) => {
   const body = req.body ?? {};
+  const bookingType = (body.type || body.loai || 'WALK_IN') as 'WALK_IN' | 'MEMBER' | 'TEACHER';
+  const startTime = new Date(body.startTime || body.bat_dau || Date.now()).toISOString();
+  const duration = Number(body.duration || body.thoi_luong || 2);
+  const people = Number(body.people || body.so_nguoi || 2);
+
+  // Chặn khách tháng hết lượt
+  if (bookingType === 'MEMBER') {
+    const member = dashboardData.members.find((m) => m.id === body.memberId || m.phone === body.phone);
+    if (member) {
+      const leftTurns = member.totalTurns - member.usedTurns;
+      if (leftTurns <= 0) {
+        return res.status(400).json({
+          message: 'Khách tháng đã hết lượt chơi trong kỳ (0 lượt còn lại). Vui lòng gia hạn gói để tiếp tục hoặc chuyển sang đặt theo hình thức khách vãng lai.',
+          needRenew: true,
+        });
+      }
+    }
+  }
+
+  // Tìm bàn trống theo thuật toán chống trùng giờ thực tế
+  let assignedTableId = Number(body.tableId || body.ban_id || 0);
+  if (!assignedTableId || assignedTableId <= 0) {
+    // Ưu tiên quét khu khách (5 - 16), sau 19h quét thêm khu dạy học (1 - 4)
+    const candidateTableNumbers = [
+      5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+      1, 2, 3, 4
+    ];
+    const found = candidateTableNumbers.find((tNum) => isTableAvailableAtInterval(tNum, startTime, duration));
+    if (!found) {
+      return res.status(400).json({ message: 'Không còn bàn trống phù hợp trong khung giờ đã chọn.', noTable: true });
+    }
+    assignedTableId = found;
+  } else {
+    // Nếu có chỉ định bàn, kiểm tra bàn đó có trống trong khung giờ không
+    if (!isTableAvailableAtInterval(assignedTableId, startTime, duration)) {
+      return res.status(400).json({ message: `Bàn ${assignedTableId} đã có người đặt hoặc trùng lớp học trong khung giờ này.`, conflict: true });
+    }
+  }
+
   const booking = {
     id: dashboardData.bookings.length + 1,
-    tableId: Number(body.tableId || body.ban_id || 0),
+    tableId: assignedTableId,
     customerName: String(body.customerName || body.ho_ten || ''),
     phone: String(body.phone || body.sdt || ''),
     email: String(body.email || ''),
-    type: (body.type || body.loai || 'WALK_IN') as 'WALK_IN' | 'MEMBER' | 'TEACHER',
-    startTime: new Date(body.startTime || body.bat_dau || Date.now()).toISOString(),
-    duration: Number(body.duration || body.thoi_luong || 2),
-    people: Number(body.people || body.so_nguoi || 2),
+    type: bookingType,
+    startTime,
+    duration,
+    people,
     status: (body.status || 'CONFIRMED') as any,
-    amount: Number(body.amount || body.tien || 0),
+    amount: bookingType === 'MEMBER' ? 0 : Number(body.amount || body.tien || (people * duration * dashboardData.config.courtPrice)),
     memberId: body.memberId ?? null,
   };
 
   dashboardData.bookings.push(booking);
 
+  // Nếu là thời gian hiện tại và check-in ngay
   if (booking.status === 'CHECKED_IN') {
     const table = dashboardData.tables.find((t) => t.tableNumber === booking.tableId);
     if (table) table.status = 'busy';
@@ -169,11 +244,13 @@ const handleCheckOut = (req: express.Request, res: express.Response) => {
   } else if (booking.type === 'MEMBER') {
     const member = dashboardData.members.find((m) => m.id === booking.memberId || m.phone === booking.phone);
     if (member) {
-      member.usedTurns += 1;
+      // Quy tắc đặc tả: Mặc định 2 giờ/lượt, quá giờ tính thêm lượt (VD: 3h tính 2 lượt)
+      const turnsToDeduct = Math.max(1, Math.ceil(booking.duration / 2));
+      member.usedTurns += turnsToDeduct;
       const left = Math.max(0, member.totalTurns - member.usedTurns);
       if (left <= 0) member.status = 'expired';
       else if (left <= 5) member.status = 'warning';
-      message = `Check-out thành công. Khách tháng đã dùng 1 lượt (còn ${left}/${member.totalTurns} lượt). Không thu tiền.`;
+      message = `Check-out thành công. Khách tháng đã dùng ${turnsToDeduct} lượt (${booking.duration} giờ chơi), còn ${left}/${member.totalTurns} lượt. Không thu tiền mặt.`;
     } else {
       message = 'Check-out thành công cho khách tháng.';
     }

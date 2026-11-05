@@ -37,3 +37,4 @@ export function startBackgroundScheduler(): () => void {
 
   return () => clearInterval(timer);
 }
+
