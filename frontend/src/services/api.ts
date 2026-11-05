@@ -41,6 +41,15 @@ export async function checkOutBooking(bookingId: number): Promise<{ amount: numb
   return data;
 }
 
+export async function createClassSession(input: {
+  teacherId: number;
+  teacherName: string;
+  date: string;
+  startHour: number;
+}): Promise<void> {
+  await api.post('/classes', input);
+}
+
 export async function approveClass(classId: number): Promise<void> {
   await api.post(`/classes/${classId}/approve`);
 }

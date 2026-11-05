@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { checkInBooking, checkOutBooking, createBooking, createWaitlist, fetchDashboard } from '../services/api';
+import { checkInBooking, checkOutBooking, createBooking, createClassSession, createWaitlist, fetchDashboard } from '../services/api';
 import type { Booking, DashboardResponse, TableInfo, User } from '../types';
 import { venueNow } from '../utils/time';
 import { validateCustomerContact } from '../utils/validation';
@@ -179,7 +179,7 @@ export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPagePro
             {isStaff && selected
               ? <CourtDetail table={selected} status={getStatus(selected)} config={data.config} onBack={() => setSelectedTable(null)} onCheckIn={handleCheckIn} onCheckOut={handleCheckOut} />
               : user.role === 'TEACHER'
-                ? <ClassRequest config={data.config} onNotify={onNotify} />
+                ? <ClassRequest config={data.config} onNotify={onNotify} onRefresh={refresh} user={user} />
                 : <BookingForm dashboard={data} user={user} onNotify={onNotify} onRefresh={refresh} />}
           </section>
           <section className="card">
@@ -392,20 +392,34 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
   );
 }
 
-function ClassRequest({ config, onNotify }: { config: DashboardResponse['config']; onNotify: (message: string) => void }) {
+function ClassRequest({ config, onNotify, onRefresh, user }: { config: DashboardResponse['config']; onNotify: (message: string) => void; onRefresh: () => Promise<void>; user: User }) {
   const [date, setDate] = useState(dayKey(new Date()));
   const [start, setStart] = useState(10);
-  const [teacher, setTeacher] = useState('Giáo viên');
+  const [teacher, setTeacher] = useState(user.name || 'Giáo viên');
   const [sending, setSending] = useState(false);
-  const submit = (event: FormEvent) => {
+
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (start + 2 > config.classCutoffHour || start < config.openingHour) {
       onNotify(`Lớp chỉ được học trong khoảng ${config.openingHour}:00 – ${config.classCutoffHour}:00.`);
       return;
     }
     setSending(true);
-    onNotify('Đăng ký lớp học cần API lớp học; API hiện tại chỉ đọc danh sách lớp.');
-    window.setTimeout(() => setSending(false), 350);
+    try {
+      await createClassSession({
+        teacherId: user.id,
+        teacherName: teacher.trim(),
+        date,
+        startHour: start,
+      });
+      await onRefresh();
+      onNotify('Đăng ký lớp học thành công! Hệ thống đã phân bổ 2 bàn khu dạy học và chuyển quản lý phê duyệt.');
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || (err instanceof Error ? err.message : 'Không thể đăng ký lớp.');
+      onNotify(msg);
+    } finally {
+      setSending(false);
+    }
   };
   return (
     <>

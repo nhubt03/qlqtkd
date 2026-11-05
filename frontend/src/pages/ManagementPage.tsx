@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { DashboardResponse, Member, User } from '../types';
 import type { PageId } from '../components/layout/Shell';
-import { renewMember } from '../services/api';
+import { approveClass, rejectClass, renewMember } from '../services/api';
 
 const packages = [
   { id: 'p1', name: 'Gói 1 tháng', months: 1, price: 449000 },
@@ -75,17 +75,77 @@ function MemberHome({ member, config }: { member?: Member; config: DashboardResp
 }
 
 function ClassesPage({ dashboard, onNotify }: { dashboard: DashboardResponse; onNotify: (message: string) => void }) {
-  const rows = [...dashboard.classes].sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || a.date.localeCompare(b.date) || a.startHour - b.startHour);
+  const [classesList, setClassesList] = useState(dashboard.classes);
+  const rows = [...classesList].sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || a.date.localeCompare(b.date) || a.startHour - b.startHour);
+
+  const handleApprove = async (id: number) => {
+    try {
+      await approveClass(id);
+      setClassesList((prev) => prev.map((item) => (item.id === id ? { ...item, status: 'approved' } : item)));
+      onNotify('Đã duyệt lớp học thành công! Bàn đã được ghi nhận trên sơ đồ sân.');
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || (err instanceof Error ? err.message : 'Lỗi khi duyệt lớp học.');
+      onNotify(msg);
+    }
+  };
+
+  const handleReject = async (id: number) => {
+    try {
+      await rejectClass(id);
+      setClassesList((prev) => prev.map((item) => (item.id === id ? { ...item, status: 'rejected' } : item)));
+      onNotify('Đã từ chối lớp học.');
+    } catch {
+      onNotify('Lỗi khi từ chối lớp học.');
+    }
+  };
+
   return (
     <>
-      <div className="pg-h"><div><h2>Lớp học</h2><p>Duyệt hoặc từ chối lớp do giáo viên đăng ký. Lớp học phải kết thúc trước {dashboard.config.classCutoffHour}:00.</p></div></div>
+      <div className="pg-h">
+        <div>
+          <h2>Lớp học</h2>
+          <p>Duyệt hoặc từ chối lớp do giáo viên đăng ký. Kiểm tra xung đột bàn và giờ; lớp học phải kết thúc trước {dashboard.config.classCutoffHour}:00.</p>
+        </div>
+      </div>
       <section className="card ovf">
-        <table><thead><tr><th>Giáo viên</th><th>Ngày</th><th>Giờ</th><th>Bàn</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
-          <tbody>{rows.map((item) => <tr key={item.id}>
-            <td>{item.teacherName}</td><td>{dateText(item.date)}</td><td className="num">{String(item.startHour).padStart(2, '0')}:00 – {String(item.endHour).padStart(2, '0')}:00</td>
-            <td>{item.tables.join(', ')}</td><td><span className={`tag ${item.status === 'approved' ? 't-bl' : item.status === 'pending' ? 't-am' : 't-rd'}`}>{item.status === 'approved' ? 'Đã duyệt' : item.status === 'pending' ? 'Chờ phê duyệt' : 'Từ chối'}</span></td>
-            <td>{item.status === 'pending' && <><button className="btn sm" type="button" onClick={() => onNotify('API hiện tại chỉ hỗ trợ đọc danh sách lớp; thao tác duyệt chưa được kết nối.')}>Duyệt</button> <button className="btn sm ghost" type="button" onClick={() => onNotify('API hiện tại chưa hỗ trợ từ chối lớp học.')}>Từ chối</button></>}</td>
-          </tr>)}</tbody>
+        <table>
+          <thead>
+            <tr>
+              <th>Giáo viên</th>
+              <th>Ngày</th>
+              <th>Giờ</th>
+              <th>Bàn khu dạy học</th>
+              <th>Trạng thái</th>
+              <th>Thao tác</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((item) => (
+              <tr key={item.id}>
+                <td><b>{item.teacherName}</b></td>
+                <td>{dateText(item.date)}</td>
+                <td className="num">{String(item.startHour).padStart(2, '0')}:00 – {String(item.endHour).padStart(2, '0')}:00</td>
+                <td>Bàn {item.tables.join(', ')}</td>
+                <td>
+                  <span className={`tag ${item.status === 'approved' ? 't-bl' : item.status === 'pending' ? 't-am' : 't-rd'}`}>
+                    {item.status === 'approved' ? 'Đã duyệt' : item.status === 'pending' ? 'Chờ phê duyệt' : 'Từ chối'}
+                  </span>
+                </td>
+                <td>
+                  {item.status === 'pending' && (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="btn sm" type="button" onClick={() => handleApprove(item.id)}>
+                        Duyệt
+                      </button>
+                      <button className="btn sm ghost" type="button" onClick={() => handleReject(item.id)}>
+                        Từ chối
+                      </button>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
         </table>
       </section>
     </>

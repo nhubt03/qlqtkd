@@ -57,6 +57,52 @@ app.get('/api/classes', (_req, res) => {
   res.json(dashboardData.classes);
 });
 
+// Giáo viên đăng ký lớp học: tự động phân bổ 2 bàn khu dạy học (bàn 1-4), kết thúc trước 19:00
+app.post('/api/classes', (req, res) => {
+  const body = req.body ?? {};
+  const startHour = Number(body.startHour ?? 10);
+  const endHour = startHour + 2;
+
+  if (startHour < dashboardData.config.openingHour || endHour > dashboardData.config.classCutoffHour) {
+    return res.status(400).json({ message: `Lớp học chỉ được đăng ký từ ${dashboardData.config.openingHour}:00 đến trước ${dashboardData.config.classCutoffHour}:00.` });
+  }
+
+  // Tự động phân bổ 2 bàn trống thuộc khu dạy học (1,2 hoặc 3,4)
+  const sessionDateStr = new Date(body.date ?? Date.now()).toDateString();
+  const existingClasses = dashboardData.classes.filter(
+    (c) =>
+      c.status !== 'rejected' &&
+      new Date(c.date).toDateString() === sessionDateStr &&
+      !(endHour <= c.startHour || startHour >= c.endHour)
+  );
+
+  const usedTables = new Set<number>();
+  existingClasses.forEach((c) => c.tables.forEach((t) => usedTables.add(t)));
+
+  let allocatedTables: number[] = [];
+  if (!usedTables.has(1) && !usedTables.has(2)) {
+    allocatedTables = [1, 2];
+  } else if (!usedTables.has(3) && !usedTables.has(4)) {
+    allocatedTables = [3, 4];
+  } else {
+    return res.status(400).json({ message: 'Khu dạy học (bàn 1-4) đã kín lớp trong khung giờ này. Vui lòng chọn giờ khác.' });
+  }
+
+  const newClass = {
+    id: dashboardData.classes.length + 1,
+    teacherId: Number(body.teacherId ?? 3),
+    teacherName: String(body.teacherName ?? 'Giáo viên'),
+    date: new Date(body.date ?? Date.now()).toISOString(),
+    startHour,
+    endHour,
+    tables: allocatedTables,
+    status: 'pending' as const,
+  };
+
+  dashboardData.classes.push(newClass);
+  res.status(201).json({ ok: true, message: `Đã gửi yêu cầu đăng ký lớp học (${allocatedTables.join(', ')}). Chờ quản lý phê duyệt.`, classSession: newClass });
+});
+
 app.get('/api/payments', (_req, res) => {
   res.json(dashboardData.payments);
 });
