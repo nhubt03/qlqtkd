@@ -3,6 +3,7 @@ import { checkInBooking, checkOutBooking, createBooking, createClassSession, cre
 import type { Booking, DashboardResponse, TableInfo, User } from '../types';
 import { venueNow } from '../utils/time';
 import { validateCustomerContact } from '../utils/validation';
+import { BookingSuccessModal, type BookingSuccessInfo } from '../components/common/BookingSuccessModal';
 
 type CourtState = 'trong' | 'dat' | 'choi' | 'lop' | 'hoc' | 'dong';
 type CourtStatus = { state: CourtState; booking?: Booking; className?: string; end?: number };
@@ -44,6 +45,7 @@ export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPagePro
   const [live, setLive] = useState(true);
   const [search, setSearch] = useState('');
   const [data, setData] = useState(dashboard);
+  const [successModal, setSuccessModal] = useState<BookingSuccessInfo | null>(null);
   const viewedAt = live ? venueNow(demoClock) : new Date(`${date}T${time || '06:00'}:00`);
 
   const getStatus = (table: TableInfo): CourtStatus => {
@@ -180,7 +182,7 @@ export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPagePro
               ? <CourtDetail table={selected} status={getStatus(selected)} config={data.config} onBack={() => setSelectedTable(null)} onCheckIn={handleCheckIn} onCheckOut={handleCheckOut} />
               : user.role === 'TEACHER'
                 ? <ClassRequest config={data.config} onNotify={onNotify} onRefresh={refresh} user={user} />
-                : <BookingForm dashboard={data} user={user} onNotify={onNotify} onRefresh={refresh} />}
+                : <BookingForm dashboard={data} user={user} onNotify={onNotify} onRefresh={refresh} onSuccessBooking={(info) => setSuccessModal(info)} />}
           </section>
           <section className="card">
             {isStaff
@@ -189,6 +191,7 @@ export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPagePro
           </section>
         </div>
       </div>
+      {successModal && <BookingSuccessModal info={successModal} onClose={() => setSuccessModal(null)} />}
     </>
   );
 }
@@ -260,7 +263,7 @@ function StaffSearch({ value, onChange, bookings, onSelect, onCheckIn }: { value
   );
 }
 
-function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: DashboardResponse; user: User; onNotify: (message: string) => void; onRefresh: () => Promise<void> }) {
+function BookingForm({ dashboard, user, onNotify, onRefresh, onSuccessBooking }: { dashboard: DashboardResponse; user: User; onNotify: (message: string) => void; onRefresh: () => Promise<void>; onSuccessBooking: (info: BookingSuccessInfo) => void }) {
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone);
   const [email, setEmail] = useState(user.email);
@@ -378,7 +381,7 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
 
     setSubmitting(true);
     try {
-      await createBooking({
+      const created = await createBooking({
         tableId: freeTableNumber,
         customerName: name.trim(),
         phone,
@@ -391,6 +394,18 @@ function BookingForm({ dashboard, user, onNotify, onRefresh }: { dashboard: Dash
         memberId: isWalkIn ? null : (user.memberId ?? null),
       });
       await onRefresh();
+      onSuccessBooking({
+        bookingId: created?.id || dashboard.bookings.length + 1,
+        tableNumber: freeTableNumber,
+        customerName: name.trim(),
+        phone,
+        date: bookingDate,
+        startTime,
+        duration,
+        people,
+        amount: isWalkIn ? cost : 0,
+        isMember: !isWalkIn,
+      });
       onNotify(`Đặt bàn thành công: Bàn ${freeTableNumber} · ${bookingDate} ${startTime} (${duration} giờ).`);
     } catch (reason: any) {
       const msg = reason?.response?.data?.message || (reason instanceof Error ? reason.message : 'Không thể tạo lượt đặt.');

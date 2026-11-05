@@ -28,8 +28,9 @@ export async function createBooking(input: {
   amount: number;
   memberId: number | null;
   status?: 'PENDING' | 'CONFIRMED' | 'CHECKED_IN';
-}): Promise<void> {
-  await api.post('/bookings', input);
+}): Promise<any> {
+  const { data } = await api.post('/bookings', input);
+  return data;
 }
 
 export async function checkInBooking(bookingId: number): Promise<void> {

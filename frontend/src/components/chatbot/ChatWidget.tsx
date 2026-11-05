@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { DashboardResponse, User } from '../../types';
 import type { PageId } from '../layout/Shell';
 import { createBooking } from '../../services/api';
+import { BookingSuccessModal, type BookingSuccessInfo } from '../common/BookingSuccessModal';
 
 interface ExtractedBooking {
   customerName: string;
@@ -31,6 +32,7 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [botSuccessModal, setBotSuccessModal] = useState<BookingSuccessInfo | null>(null);
   const thread = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -199,7 +201,7 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
         return;
       }
       const startIso = new Date(`${extracted.date}T${extracted.time}:00`).toISOString();
-      await createBooking({
+      const created = await createBooking({
         tableId: availableTable.tableNumber,
         customerName: extracted.customerName,
         phone: user.phone,
@@ -211,13 +213,28 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
         amount: user.role === 'MEMBER' ? 0 : extracted.people * extracted.duration * dashboard.config.courtPrice,
         memberId: user.memberId ?? null,
       });
+
+      const newBookingId = created?.id || dashboard.bookings.length + 1;
+      setBotSuccessModal({
+        bookingId: newBookingId,
+        tableNumber: availableTable.tableNumber,
+        customerName: extracted.customerName,
+        phone: user.phone,
+        date: extracted.date,
+        startTime: extracted.time,
+        duration: extracted.duration,
+        people: extracted.people,
+        amount: user.role === 'MEMBER' ? 0 : extracted.people * extracted.duration * dashboard.config.courtPrice,
+        isMember: user.role === 'MEMBER',
+      });
+
       onNotify(`AI-3 đã đặt bàn thành công: Bàn ${availableTable.tableNumber} · ${extracted.date} ${extracted.time}!`);
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now(),
           role: 'assistant',
-          text: `✅ Đặt bàn thành công! Hệ thống đã phân bổ Bàn ${availableTable.tableNumber} cho bạn vào lúc ${extracted.time} (${extracted.date}). Vui lòng đến trước giờ chơi và đưa mã cho nhân viên quầy check-in nhé!`,
+          text: `✅ Đặt bàn thành công! Hệ thống đã phân bổ Bàn ${availableTable.tableNumber} cho bạn vào lúc ${extracted.time} (${extracted.date}) với mã check-in PB-${String(newBookingId).padStart(4, '0')}. Vui lòng đến trước giờ chơi và đưa mã cho nhân viên quầy nhé!`,
         },
       ]);
     } catch {
@@ -325,6 +342,10 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
       >
         <Paddle size={34} />
       </button>
+
+      {botSuccessModal && (
+        <BookingSuccessModal info={botSuccessModal} onClose={() => setBotSuccessModal(null)} />
+      )}
     </>
   );
 }
