@@ -335,22 +335,62 @@ function CourtDetail({ table, status, config, onBack, onCheckIn, onCheckOut }: {
 }
 
 function StaffSearch({ value, onChange, bookings, onSelect, onCheckIn }: { value: string; onChange: (value: string) => void; bookings: Booking[]; onSelect: (booking: Booking) => void; onCheckIn: (id: number) => void }) {
-  const matches = bookings.filter((booking) => ['CONFIRMED', 'PENDING', 'CHECKED_IN'].includes(booking.status) && `${booking.customerName} ${booking.phone} ${booking.id}`.toLowerCase().includes(value.toLowerCase())).slice(0, 6);
+  const query = value.trim().toLowerCase();
+  const numericQuery = query.replace(/^pb-0*/i, '').replace(/\D/g, '');
+
+  const matches = bookings
+    .filter((booking) => {
+      if (!['CONFIRMED', 'PENDING', 'CHECKED_IN'].includes(booking.status)) return false;
+      const codeFull = `pb-${String(booking.id).padStart(4, '0')}`.toLowerCase();
+      const codeShort = `pb-${booking.id}`.toLowerCase();
+      const searchTarget = `${booking.customerName} ${booking.phone} ${booking.id} ${codeFull} ${codeShort} bàn ${booking.tableId}`.toLowerCase();
+
+      return (
+        searchTarget.includes(query) ||
+        (numericQuery && String(booking.id) === numericQuery)
+      );
+    })
+    .slice(0, 6);
+
   return (
     <>
       <label htmlFor="court-search">Check-in</label>
-      <input className="in" id="court-search" placeholder="Tìm theo tên, mã bàn hoặc SĐT" value={value} onChange={(event) => onChange(event.target.value)} />
-      {value && <ul className="res-list">{matches.map((booking) => (
-        <li key={booking.id}>
-          <span><b>Bàn {booking.tableId}</b> · {booking.customerName}<br /><small className="hint">#{booking.id} · {booking.phone} · {timeText(new Date(booking.startTime))}</small></span>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {booking.status !== 'CHECKED_IN' && (
-              <button className="btn sm" type="button" onClick={() => onCheckIn(booking.id)}>Check-in</button>
-            )}
-            <button className="btn sm ghost" type="button" onClick={() => onSelect(booking)}>{booking.status === 'CHECKED_IN' ? 'Xem bàn' : 'Chi tiết'}</button>
-          </div>
-        </li>
-      ))}{!matches.length && <li><span className="hint">Không tìm thấy lượt đặt phù hợp.</span></li>}</ul>}
+      <input
+        className="in"
+        id="court-search"
+        placeholder="Nhập mã check-in (ví dụ: PB-0001), tên hoặc SĐT"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {value && (
+        <ul className="res-list">
+          {matches.map((booking) => (
+            <li key={booking.id}>
+              <span>
+                <b>PB-{String(booking.id).padStart(4, '0')}</b> · Bàn {booking.tableId} · {booking.customerName}
+                <br />
+                <small className="hint">{booking.phone} · {timeText(new Date(booking.startTime))}</small>
+              </span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {booking.status !== 'CHECKED_IN' && (
+                  <button className="btn sm" type="button" onClick={() => onCheckIn(booking.id)}>Check-in</button>
+                )}
+                <button className="btn sm ghost" type="button" onClick={() => onSelect(booking)}>
+                  {booking.status === 'CHECKED_IN' ? 'Xem bàn' : 'Chi tiết'}
+                </button>
+              </div>
+            </li>
+          ))}
+          {!matches.length && (
+            <li>
+              <span className="hint">
+                Không tìm thấy lượt đặt phù hợp.
+                {bookings.length === 0 && ' (Hệ thống hiện chưa có lượt đặt nào, vui lòng đặt bàn trước để tạo mã)'}
+              </span>
+            </li>
+          )}
+        </ul>
+      )}
       <div style={{ height: 12 }} />
     </>
   );

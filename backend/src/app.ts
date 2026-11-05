@@ -284,8 +284,9 @@ app.post('/api/dat-ban/:id/huy', (req, res) => {
 // 4. CHECK-IN / CHECK-OUT
 // ==========================================
 const handleCheckIn = (req: express.Request, res: express.Response) => {
-  const id = Number(req.params.id || req.body.bookingId || req.body.id);
-  const booking = dashboardData.bookings.find((b) => b.id === id);
+  const rawParam = String(req.params.id || req.body.bookingId || req.body.id || '').trim();
+  const numericId = Number(rawParam.replace(/^pb-0*/i, '').replace(/\D/g, '')) || Number(rawParam);
+  const booking = dashboardData.bookings.find((b) => b.id === numericId);
 
   if (!booking) {
     return res.status(404).json({ message: 'Không tìm thấy lượt đặt.' });
@@ -304,8 +305,9 @@ app.post('/api/bookings/:id/checkin', handleCheckIn);
 app.post('/api/checkin', handleCheckIn);
 
 const handleCheckOut = (req: express.Request, res: express.Response) => {
-  const id = Number(req.params.id || req.body.bookingId || req.body.id);
-  const booking = dashboardData.bookings.find((b) => b.id === id);
+  const rawParam = String(req.params.id || req.body.bookingId || req.body.id || '').trim();
+  const numericId = Number(rawParam.replace(/^pb-0*/i, '').replace(/\D/g, '')) || Number(rawParam);
+  const booking = dashboardData.bookings.find((b) => b.id === numericId);
 
   if (!booking) {
     return res.status(404).json({ message: 'Không tìm thấy lượt đặt.' });
