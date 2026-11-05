@@ -61,6 +61,8 @@ const payments: Payment[] = [
 export const dashboardData: DashboardResponse = {
   config: {
     courtPrice: 20000,
+    teacherPrice: 250000,
+    holdLimitMinutes: 15,
     defaultHours: 2,
     maxPeoplePerTable: 4,
     openingHour: 6,

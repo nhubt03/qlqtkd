@@ -69,6 +69,8 @@ export interface Payment {
 export interface DashboardResponse {
   config: {
     courtPrice: number;
+    teacherPrice?: number;
+    holdLimitMinutes?: number;
     defaultHours: number;
     maxPeoplePerTable: number;
     openingHour: number;

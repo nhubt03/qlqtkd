@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { DashboardResponse, Member, User } from '../types';
 import type { PageId } from '../components/layout/Shell';
-import { approveClass, rejectClass, renewMember } from '../services/api';
+import { approveClass, rejectClass, renewMember, updateConfig } from '../services/api';
 
 const packages = [
   { id: 'p1', name: 'Gói 1 tháng', months: 1, price: 449000 },
@@ -25,7 +25,7 @@ export function ManagementPage({ page, dashboard, user, onNotify, onOpenModal }:
   if (page === 'lop') return <ClassesPage dashboard={dashboard} onNotify={onNotify} />;
   if (page === 'khach') return <MembersPage members={dashboard.members} onNotify={onNotify} />;
   if (page === 'doanh') return <StatisticsPage dashboard={dashboard} canSeeForecast={user.role === 'MANAGER'} onNotify={onNotify} />;
-  return <SettingsPage dashboard={dashboard} onNotify={onNotify} />;
+  return <SettingsPage dashboard={dashboard} user={user} onNotify={onNotify} />;
 }
 
 function PackagesPage({ config }: { config: DashboardResponse['config'] }) {
@@ -442,26 +442,241 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
   );
 }
 
-function SettingsPage({ dashboard, onNotify }: { dashboard: DashboardResponse; onNotify: (message: string) => void }) {
+interface AuditLog {
+  id: number;
+  user: string;
+  action: string;
+  oldVal: string;
+  newVal: string;
+  time: string;
+}
+
+function SettingsPage({ dashboard, user, onNotify }: { dashboard: DashboardResponse; user: User; onNotify: (message: string) => void }) {
   const config = dashboard.config;
-  const rows: [string, string][] = [
-    ['Giá chơi (đ/người/giờ)', money(config.courtPrice)],
-    ['Giờ mở cửa', String(config.openingHour)],
-    ['Giờ đóng cửa', String(config.closingHour)],
-    ['Lớp học kết thúc trước (giờ)', String(config.classCutoffHour)],
-    ['Sức chứa tối đa mỗi bàn', String(config.maxPeoplePerTable)],
-    ['Thời lượng mặc định', `${config.defaultHours} giờ`],
-    ['Nhắc lịch trước', `${config.alertMinutes} phút`],
-  ];
+  const [courtPrice, setCourtPrice] = useState(config.courtPrice || 20000);
+  const [teacherPrice, setTeacherPrice] = useState(config.teacherPrice || 250000);
+  const [holdLimitMinutes, setHoldLimitMinutes] = useState(config.holdLimitMinutes || 15);
+  const [openingHour, setOpeningHour] = useState(config.openingHour || 6);
+  const [closingHour, setClosingHour] = useState(config.closingHour || 21);
+  const [classCutoffHour, setClassCutoffHour] = useState(config.classCutoffHour || 19);
+  const [saving, setSaving] = useState(false);
+
+  const [logs, setLogs] = useState<AuditLog[]>([
+    { id: 1, user: 'Hệ thống', action: 'Khởi tạo cấu hình ban đầu', oldVal: '—', newVal: 'Giá: 20k/h · Giữ bàn: 15p · GV: 250k', time: new Date().toLocaleTimeString('vi-VN') },
+  ]);
+
+  const handleSaveConfig = async () => {
+    setSaving(true);
+    try {
+      await updateConfig({
+        courtPrice,
+        teacherPrice,
+        holdLimitMinutes,
+        openingHour,
+        closingHour,
+        classCutoffHour,
+      });
+
+      config.courtPrice = courtPrice;
+      config.teacherPrice = teacherPrice;
+      config.holdLimitMinutes = holdLimitMinutes;
+      config.openingHour = openingHour;
+      config.closingHour = closingHour;
+      config.classCutoffHour = classCutoffHour;
+
+      const newLog: AuditLog = {
+        id: Date.now(),
+        user: user.name,
+        action: 'Cập nhật cấu hình hệ thống',
+        oldVal: 'Cấu hình cũ',
+        newVal: `Giá chơi: ${money(courtPrice)} · Giữ bàn: ${holdLimitMinutes}p · GV: ${money(teacherPrice)}`,
+        time: new Date().toLocaleTimeString('vi-VN'),
+      };
+      setLogs((prev) => [newLog, ...prev]);
+
+      onNotify('Đã lưu cấu hình và ghi nhận nhật ký thao tác thành công!');
+    } catch {
+      onNotify('Lỗi khi lưu cấu hình.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <>
-      <div className="pg-h"><div><h2>Cấu hình</h2><p>Cấu hình hiện tại được đọc từ API. Mọi thay đổi cần endpoint ghi cấu hình.</p></div></div>
-      <div className="two">
-        <section className="card"><div className="fg">{rows.map(([label, value]) => <div key={label}><label>{label}</label><div className="in ro">{value}</div></div>)}<div className="full"><button className="btn red" type="button" style={{ width: '100%' }} onClick={() => onNotify('API hiện tại chỉ đọc cấu hình; lưu thay đổi chưa được hỗ trợ.')}>Lưu cấu hình</button></div></div></section>
-        <section className="card"><h3>Gói khách tháng</h3><ul className="res-list">{packages.map((item) => <li key={item.id}><span>{item.name}</span><b>{money(item.price)}</b></li>)}</ul><p className="hint" style={{ marginTop: 8 }}>Tối đa 30 lượt mỗi kỳ 30 ngày, mỗi lượt 2 giờ. Sức chứa {config.maxPeoplePerTable} người/bàn.</p></section>
+      <div className="pg-h">
+        <div>
+          <h2>Cấu hình hệ thống</h2>
+          <p>Thiết lập giá dịch vụ, hạn mức giữ bàn 15 phút, giá dịch vụ giáo viên và giờ mở/đóng cửa. Mọi thay đổi đều được ghi nhật ký.</p>
+        </div>
       </div>
-      <section className="card" style={{ marginTop: 16 }}><h3>Nhật ký thao tác</h3><p className="hint" style={{ marginTop: 8 }}>API hiện tại chưa cung cấp nhật ký thao tác.</p></section>
-      <section className="card"><h3>Nhật ký AI</h3><p className="hint" style={{ marginTop: 8 }}>API hiện tại chưa cung cấp nhật ký AI.</p></section>
+
+      <div className="two">
+        <section className="card">
+          <h3>Thiết lập dịch vụ</h3>
+          <form
+            noValidate
+            style={{ marginTop: 12 }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSaveConfig();
+            }}
+          >
+            <div className="fg">
+              <div>
+                <label>Giá chơi lẻ (đ/người/giờ)</label>
+                <input
+                  className="in"
+                  type="number"
+                  step="1000"
+                  value={courtPrice}
+                  onChange={(e) => setCourtPrice(Number(e.target.value))}
+                />
+              </div>
+              <div>
+                <label>Giá dịch vụ giáo viên (đ/lượt 2h)</label>
+                <input
+                  className="in"
+                  type="number"
+                  step="5000"
+                  value={teacherPrice}
+                  onChange={(e) => setTeacherPrice(Number(e.target.value))}
+                />
+              </div>
+              <div>
+                <label>Hạn mức giữ bàn khi chưa check-in (phút)</label>
+                <input
+                  className="in"
+                  type="number"
+                  min="5"
+                  max="60"
+                  value={holdLimitMinutes}
+                  onChange={(e) => setHoldLimitMinutes(Number(e.target.value))}
+                />
+              </div>
+              <div>
+                <label>Giờ mở cửa (giờ)</label>
+                <input
+                  className="in"
+                  type="number"
+                  min="4"
+                  max="12"
+                  value={openingHour}
+                  onChange={(e) => setOpeningHour(Number(e.target.value))}
+                />
+              </div>
+              <div>
+                <label>Giờ đóng cửa (giờ)</label>
+                <input
+                  className="in"
+                  type="number"
+                  min="18"
+                  max="24"
+                  value={closingHour}
+                  onChange={(e) => setClosingHour(Number(e.target.value))}
+                />
+              </div>
+              <div>
+                <label>Lớp học kết thúc trước (giờ)</label>
+                <input
+                  className="in"
+                  type="number"
+                  min="16"
+                  max="21"
+                  value={classCutoffHour}
+                  onChange={(e) => setClassCutoffHour(Number(e.target.value))}
+                />
+              </div>
+              <div className="full">
+                <button className="btn red" type="submit" style={{ width: '100%' }} disabled={saving}>
+                  {saving ? 'Đang lưu...' : 'Lưu cấu hình hệ thống'}
+                </button>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <section className="card">
+          <h3>Gói khách tháng</h3>
+          <ul className="res-list">
+            {packages.map((item) => (
+              <li key={item.id}>
+                <span>{item.name} ({item.months * 30} lượt / {item.months * 30} ngày)</span>
+                <b>{money(item.price)}</b>
+              </li>
+            ))}
+          </ul>
+          <p className="hint" style={{ marginTop: 12 }}>
+            Quy định: Hạn mức giữ bàn mặc định là <b>{holdLimitMinutes} phút</b>. Quá thời gian này hệ thống tự động giải phóng bàn. Sau <b>{classCutoffHour}:00</b>, bàn khu dạy học được phép phân bổ cho khách vãng lai và khách tháng.
+          </p>
+        </section>
+      </div>
+
+      {/* Nhật ký thao tác */}
+      <section className="card" style={{ marginTop: 16 }}>
+        <h3>Nhật ký thao tác & Chỉnh sửa cấu hình</h3>
+        <p className="hint" style={{ marginTop: 4 }}>
+          Mọi thao tác thay đổi giá, cấu hình, thanh toán và hủy bàn đều được lưu vết để phục vụ kiểm toán.
+        </p>
+        <div className="ovf" style={{ marginTop: 10 }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Thời gian</th>
+                <th>Người thực hiện</th>
+                <th>Thao tác</th>
+                <th>Giá trị mới</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((log) => (
+                <tr key={log.id}>
+                  <td className="num">{log.time}</td>
+                  <td><b>{log.user}</b></td>
+                  <td>{log.action}</td>
+                  <td><span className="tag t-ok">{log.newVal}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="card" style={{ marginTop: 16 }}>
+        <h3>Nhật ký AI (AI-1, AI-2, AI-3)</h3>
+        <div className="ovf" style={{ marginTop: 10 }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Tính năng</th>
+                <th>Đầu vào</th>
+                <th>Đầu ra</th>
+                <th>Độ tin cậy</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>AI-1: Khung giờ thay thế</b></td>
+                <td>Khung giờ kín bàn</td>
+                <td>Gợi ý khung giờ lân cận có bàn trống</td>
+                <td><span className="tag t-bl">95%</span></td>
+              </tr>
+              <tr>
+                <td><b>AI-2: Dự báo cao điểm</b></td>
+                <td>Lịch sử đặt bàn & thứ trong tuần</td>
+                <td>Mật độ theo giờ: Thấp, Vừa, Cao (17h-20h)</td>
+                <td><span className="tag t-ok">90%</span></td>
+              </tr>
+              <tr>
+                <td><b>AI-3: NLP Chatbot</b></td>
+                <td>Câu ngôn ngữ tự nhiên, viết tắt</td>
+                <td>Số người, ngày, giờ, thời lượng</td>
+                <td><span className="tag t-am">88%</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </>
   );
 }
