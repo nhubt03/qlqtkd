@@ -33,11 +33,8 @@ function App() {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
-  useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(''), 3600);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
+  // Thông báo theo quy định chỉ được đóng khi người dùng click vào nút "Đóng", không dùng timer tự tắt
+
 
   const handleLogin = async (identifier: string, password: string) => {
     try {
@@ -74,7 +71,12 @@ function App() {
     return (
       <>
         <LoginPage error={error} onLogin={handleLogin} />
-        {notice && <div className="toast-region" role="status">{notice}</div>}
+        {notice && (
+          <div className="toast-region" role="status">
+            <span>{notice}</span>
+            <button className="btn sm ghost" style={{ marginLeft: 8 }} onClick={() => setNotice('')}>Đóng</button>
+          </div>
+        )}
       </>
     );
   }
