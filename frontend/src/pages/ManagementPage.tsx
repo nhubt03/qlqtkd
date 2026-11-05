@@ -276,6 +276,34 @@ function MembersPage({ members, onNotify }: { members: Member[]; onNotify: (mess
 
 function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: DashboardResponse; canSeeForecast: boolean; onNotify: (message: string) => void }) {
   const payments = dashboard.payments;
+
+  const exportCSV = () => {
+    if (!payments.length) {
+      onNotify('Chưa có dữ liệu thanh toán để xuất báo cáo.');
+      return;
+    }
+    const headers = ['STT', 'Thời gian', 'Loại giao dịch', 'Tham chiếu / Khách hàng', 'Người thu', 'Số tiền (VNĐ)'];
+    const rows = payments.map((p, idx) => [
+      idx + 1,
+      `"${new Date(p.createdAt).toLocaleString('vi-VN')}"`,
+      `"${p.type === 'goi' ? 'Gói tháng' : 'Tiền chơi lẻ'}"`,
+      `"${p.reference.replace(/"/g, '""')}"`,
+      `"${p.who.replace(/"/g, '""')}"`,
+      p.amount,
+    ]);
+    const total = payments.reduce((sum, item) => sum + item.amount, 0);
+    rows.push(['TỔNG CỘNG', '', '', `"${payments.length} giao dịch"`, '', total]);
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Bao_Cao_Doanh_Thu_PingPongBros_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    onNotify('Đã xuất báo cáo doanh thu thành công (file CSV tương thích Excel)!');
+  };
   const max = Math.max(...payments.map((item) => item.amount), 1);
 
   // Tính toán AI-2: Dự báo mật độ cho từng khung giờ từ 06:00 đến 21:00
@@ -408,7 +436,12 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
       )}
 
       <section className="card" style={{ marginTop: 16 }}>
-        <h3>Nhật ký thanh toán tiền</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <h3>Nhật ký thanh toán tiền</h3>
+          <button className="btn" type="button" onClick={exportCSV} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span>📥 Xuất báo cáo (CSV/Excel)</span>
+          </button>
+        </div>
         <div className="ovf" style={{ marginTop: 10 }}>
           <table>
             <thead>

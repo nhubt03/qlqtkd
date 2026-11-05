@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { checkInBooking, checkOutBooking, createBooking, createClassSession, createWaitlist, fetchDashboard } from '../services/api';
 import type { Booking, DashboardResponse, TableInfo, User } from '../types';
 import { venueNow } from '../utils/time';
@@ -47,6 +47,17 @@ export function CourtPage({ dashboard, user, demoClock, onNotify }: CourtPagePro
   const [data, setData] = useState(dashboard);
   const [successModal, setSuccessModal] = useState<BookingSuccessInfo | null>(null);
   const viewedAt = live ? venueNow(demoClock) : new Date(`${date}T${time || '06:00'}:00`);
+
+  // Polling tự động cập nhật bản đồ sân thời gian thực mỗi 5 giây theo yêu cầu phi chức năng mục 6.4
+  useEffect(() => {
+    if (!live) return;
+    const interval = setInterval(() => {
+      fetchDashboard()
+        .then((fresh) => setData(fresh))
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [live]);
 
   const getStatus = (table: TableInfo): CourtStatus => {
     const hour = viewedAt.getHours() + viewedAt.getMinutes() / 60;
