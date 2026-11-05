@@ -713,15 +713,72 @@ app.get('/api/thong-ke/doanh-thu', (_req, res) => {
   });
 });
 
-app.get('/api/thong-ke/gio-cao-diem', (_req, res) => {
-  res.json({ peakHour: '17:00 - 20:00', status: 'high', suggestion: 'Bố trí thêm 2 nhân viên quầy' });
+app.get('/api/thong-ke/gio-cao-diem', (req, res) => {
+  const dateStr = String(req.query.date || new Date().toISOString().slice(0, 10));
+  const hourCounts: Record<number, number> = {};
+  for (let h = dashboardData.config.openingHour; h < dashboardData.config.closingHour; h++) {
+    hourCounts[h] = 0;
+  }
+
+  dashboardData.bookings.forEach((b) => {
+    if (['CANCELLED', 'CHECKED_OUT'].includes(b.status)) return;
+    if (!b.startTime.startsWith(dateStr)) return;
+    const startH = new Date(b.startTime).getHours();
+    for (let h = startH; h < startH + b.duration; h++) {
+      if (hourCounts[h] !== undefined) hourCounts[h]++;
+    }
+  });
+
+  dashboardData.classes.forEach((c) => {
+    if (c.status !== 'approved' || !c.date.startsWith(dateStr)) return;
+    for (let h = c.startHour; h < c.endHour; h++) {
+      if (hourCounts[h] !== undefined) hourCounts[h] += (c.tables?.length || 1);
+    }
+  });
+
+  const peakHourList = Object.entries(hourCounts)
+    .filter(([_, count]) => count >= 12)
+    .map(([h]) => `${String(h).padStart(2, '0')}:00`);
+
+  const maxCount = Math.max(...Object.values(hourCounts), 0);
+  const status = maxCount >= 12 ? 'high' : maxCount >= 6 ? 'medium' : 'low';
+  const peakHour = peakHourList.length > 0 ? peakHourList.join(', ') : '17:00 - 20:00';
+  const suggestion = status === 'high' ? 'Bố trí thêm 2 nhân viên quầy' : 'Bố trí 1 nhân viên quầy trực là đảm bảo';
+
+  res.json({ date: dateStr, peakHour, status, suggestion, hourCounts });
 });
 
 // ==========================================
 // 9. AI ENDPOINTS (AI-1, AI-2, AI-3)
 // ==========================================
-app.get('/api/ai/du-bao', (_req, res) => {
-  res.json({ peakHours: ['17:00', '18:00', '19:00', '20:00'], level: 'high' });
+app.get('/api/ai/du-bao', (req, res) => {
+  const dateStr = String(req.query.date || new Date().toISOString().slice(0, 10));
+  const hourCounts: Record<number, number> = {};
+  for (let h = dashboardData.config.openingHour; h < dashboardData.config.closingHour; h++) {
+    hourCounts[h] = 0;
+  }
+
+  dashboardData.bookings.forEach((b) => {
+    if (['CANCELLED', 'CHECKED_OUT'].includes(b.status)) return;
+    if (!b.startTime.startsWith(dateStr)) return;
+    const startH = new Date(b.startTime).getHours();
+    for (let h = startH; h < startH + b.duration; h++) {
+      if (hourCounts[h] !== undefined) hourCounts[h]++;
+    }
+  });
+
+  let peakHours = Object.entries(hourCounts)
+    .filter(([_, count]) => count >= 12)
+    .map(([h]) => `${String(h).padStart(2, '0')}:00`);
+
+  if (peakHours.length === 0) {
+    peakHours = ['17:00', '18:00', '19:00', '20:00'];
+  }
+
+  const maxCount = Math.max(...Object.values(hourCounts), 0);
+  const level = maxCount >= 12 ? 'high' : maxCount >= 6 ? 'medium' : 'low';
+
+  res.json({ date: dateStr, peakHours, level, hourCounts });
 });
 
 app.post('/api/ai/dat-ban', handleBookingCreation);

@@ -506,63 +506,89 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
   };
   const max = Math.max(...payments.map((item) => item.amount), 1);
 
-  // Tính toán AI-2: Dự báo mật độ cho từng khung giờ từ 06:00 đến 21:00
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+
+  // Tính toán thực tế 100%: Mật độ đặt sân và lớp học cho từng khung giờ từ 06:00 đến 21:00
   const forecastHours = useMemo(() => {
     const hours = [];
-    const today = new Date().getDay(); // 0: CN, 5: Thứ 6, 6: Thứ 7
-    const isWeekendPeak = today === 5 || today === 6 || today === 0;
+    const openH = dashboard.config.openingHour || 6;
+    const closeH = dashboard.config.closingHour || 21;
 
-    for (let h = dashboard.config.openingHour; h < dashboard.config.closingHour; h++) {
-      // Đếm số lượt đặt thực tế trong giờ này
-      const currentBookings = dashboard.bookings.filter((b) => {
-        if (!['CONFIRMED', 'CHECKED_IN'].includes(b.status)) return false;
+    for (let h = openH; h < closeH; h++) {
+      // 1. Đếm đơn đặt bàn thực tế của khách hàng trong giờ h ngày selectedDate
+      const activeBookings = (dashboard.bookings || []).filter((b) => {
+        if (['CANCELLED', 'CHECKED_OUT'].includes(b.status)) return false;
+        const bDate = b.startTime.slice(0, 10);
+        if (bDate !== selectedDate) return false;
         const bStart = new Date(b.startTime).getHours();
         const bEnd = bStart + b.duration;
         return h >= bStart && h < bEnd;
-      }).length;
+      });
 
-      // Mô hình AI trọng số thời gian (giờ tan tầm 17h-20h nhu cầu tăng cao, đặc biệt cuối tuần)
-      let baseLoad = 0.2;
-      if (h >= 17 && h <= 20) {
-        baseLoad = isWeekendPeak ? 0.85 : 0.72;
-      } else if (h >= 7 && h <= 9) {
-        baseLoad = 0.45;
-      } else if (h >= 14 && h < 17) {
-        baseLoad = 0.55;
-      }
+      // 2. Đếm lớp học của giáo viên đã duyệt trong giờ h ngày selectedDate
+      const activeClasses = (dashboard.classes || []).filter((c) => {
+        if (c.status !== 'approved') return false;
+        const cDate = c.date.slice(0, 10);
+        if (cDate !== selectedDate) return false;
+        return h >= c.startHour && h < c.endHour;
+      });
 
-      // Kết hợp dữ liệu đặt thực tế với mô hình dự báo
-      const realRatio = currentBookings / 16;
-      const combinedRatio = Math.min(1, Math.max(realRatio, baseLoad));
+      const bookedTablesCount = activeBookings.length;
+      const classTablesCount = activeClasses.reduce((sum, c) => sum + (c.tables?.length || 1), 0);
+      const occupiedTables = Math.min(16, bookedTablesCount + classTablesCount);
+
+      const ratio = occupiedTables / 16;
+      const heightPct = Math.round(ratio * 100);
 
       let level: 'low' | 'med' | 'high' = 'low';
       let levelLabel = 'Thấp';
-      let color = '#27ae60'; // Xanh
-      if (combinedRatio >= 0.7) {
+      let color = '#27ae60'; // Xanh lá (<40%)
+      if (ratio >= 0.7) {
         level = 'high';
         levelLabel = 'Cao';
-        color = '#c0392b'; // Đỏ
-      } else if (combinedRatio >= 0.4) {
+        color = '#c0392b'; // Đỏ (>=70%)
+      } else if (ratio >= 0.4) {
         level = 'med';
         levelLabel = 'Vừa';
-        color = '#f39c12'; // Vàng
+        color = '#f39c12'; // Vàng cam (40-69%)
+      } else if (occupiedTables === 0) {
+        levelLabel = 'Trống';
+        color = '#94a3b8'; // Xám khi 0 bàn
       }
-
-      const predictedOccupied = Math.round(combinedRatio * 16);
 
       hours.push({
         hour: h,
         label: `${String(h).padStart(2, '0')}:00`,
-        ratio: combinedRatio,
-        heightPct: Math.round(combinedRatio * 100),
+        ratio,
+        heightPct,
         level,
         levelLabel,
         color,
-        predictedOccupied,
+        occupiedTables,
+        bookedTablesCount,
+        classTablesCount,
       });
     }
     return hours;
-  }, [dashboard.bookings, dashboard.config]);
+  }, [dashboard.bookings, dashboard.classes, dashboard.config, selectedDate]);
+
+  const highHours = forecastHours.filter((h) => h.level === 'high');
+  const medHours = forecastHours.filter((h) => h.level === 'med');
+  const maxOccupied = Math.max(...forecastHours.map((h) => h.occupiedTables), 0);
+  const totalOccupiedSessions = forecastHours.reduce((sum, h) => sum + h.occupiedTables, 0);
+
+  let aiInsight = '';
+  if (highHours.length > 0) {
+    const hoursStr = highHours.map((h) => h.label).join(', ');
+    aiInsight = `Khung giờ cao điểm thực tế rơi vào ${hoursStr} (mật độ Cao ≥ 70%, cao nhất đạt ${maxOccupied}/16 bàn). Đề xuất quản lý bố trí đủ 2 nhân viên quầy trực hỗ trợ check-in và điều phối hàng chờ.`;
+  } else if (medHours.length > 0) {
+    const hoursStr = medHours.map((h) => h.label).join(', ');
+    aiInsight = `Nhu cầu sử dụng sân ở mức vừa phải (tập trung vào các khung giờ ${hoursStr}, cao nhất ${maxOccupied}/16 bàn). Bố trí 1–2 nhân viên phục vụ là phù hợp.`;
+  } else if (totalOccupiedSessions > 0) {
+    aiInsight = `Mật độ sân trong ngày ở mức thấp (cao nhất ${maxOccupied}/16 bàn). 1 nhân viên quầy trực là đủ đảm bảo vận hành.`;
+  } else {
+    aiInsight = `Chưa ghi nhận đơn đặt sân hoặc lớp học nào trong ngày ${new Date(selectedDate).toLocaleDateString('vi-VN')}. Toàn bộ 16 bàn đang trống và sẵn sàng tiếp nhận khách.`;
+  }
 
   return (
     <>
@@ -586,36 +612,49 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
       {/* Phân hệ AI-2 Dự báo Giờ cao điểm */}
       {canSeeForecast && (
         <section className="card" style={{ marginTop: 16 }}>
-          <div className="pg-h" style={{ marginBottom: 10 }}>
+          <div className="pg-h" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
             <div>
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
                 <span>🤖 AI-2 Dự báo mật độ & giờ cao điểm</span>
-                <span className="tag" style={{ background: '#1d4ba8', color: '#fff' }}>Dự báo theo giờ</span>
+                <span className="tag" style={{ background: '#1d4ba8', color: '#fff' }}>Dữ liệu thực tế</span>
               </h3>
-              <p className="hint">
-                AI phân tích lịch sử đặt bàn và khung giờ theo ngày trong tuần để dự báo nhu cầu sân, giúp quản lý bố trí nhân sự.
+              <p className="hint" style={{ margin: '4px 0 0' }}>
+                Phân tích tỷ lệ chiếm dụng sân theo thời gian thực từ các đơn đặt bàn và lịch lớp học đã duyệt.
               </p>
             </div>
-            <div className="legend">
-              <span className="tag" style={{ background: '#eafaf1', color: '#27ae60', border: '1px solid #27ae60' }}>Thấp (&lt;40%)</span>
-              <span className="tag" style={{ background: '#fef9e7', color: '#f39c12', border: '1px solid #f39c12' }}>Vừa (40-69%)</span>
-              <span className="tag" style={{ background: '#fdedec', color: '#c0392b', border: '1px solid #c0392b' }}>Cao (≥70%)</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <label htmlFor="forecast-date" style={{ fontSize: 13, fontWeight: 'bold' }}>Ngày xem:</label>
+                <input
+                  id="forecast-date"
+                  type="date"
+                  className="in"
+                  style={{ padding: '4px 8px', fontSize: 13, width: 'auto' }}
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                />
+              </div>
+              <div className="legend" style={{ display: 'flex', gap: 6 }}>
+                <span className="tag" style={{ background: '#eafaf1', color: '#27ae60', border: '1px solid #27ae60' }}>Thấp (&lt;40%)</span>
+                <span className="tag" style={{ background: '#fef9e7', color: '#f39c12', border: '1px solid #f39c12' }}>Vừa (40-69%)</span>
+                <span className="tag" style={{ background: '#fdedec', color: '#c0392b', border: '1px solid #c0392b' }}>Cao (≥70%)</span>
+              </div>
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 180, padding: '20px 10px 10px', background: 'var(--surface2, #f8f9fa)', borderRadius: 8, overflowX: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 190, padding: '20px 10px 10px', background: 'var(--surface2, #f8f9fa)', borderRadius: 8, overflowX: 'auto' }}>
             {forecastHours.map((item) => (
               <div
                 key={item.hour}
-                style={{ flex: '1 1 0', minWidth: 38, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}
-                title={`${item.label}: Dự kiến ${item.predictedOccupied}/16 bàn (${item.levelLabel})`}
+                style={{ flex: '1 1 0', minWidth: 42, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}
+                title={`${item.label}: Thực tế chiếm dụng ${item.occupiedTables}/16 bàn (${item.heightPct}%) · Khách đặt: ${item.bookedTablesCount} bàn, Lớp học: ${item.classTablesCount} bàn`}
               >
                 <small style={{ fontSize: 10, color: item.color, fontWeight: 'bold' }}>{item.levelLabel}</small>
-                <div style={{ width: '100%', height: 110, display: 'flex', alignItems: 'flex-end', background: '#e0e0e0', borderRadius: 4 }}>
+                <div style={{ width: '100%', height: 110, display: 'flex', alignItems: 'flex-end', background: '#e2e8f0', borderRadius: 4 }}>
                   <div
                     style={{
                       width: '100%',
-                      height: `${item.heightPct}%`,
+                      height: `${Math.max(item.heightPct, 4)}%`,
                       background: item.color,
                       borderRadius: 4,
                       transition: 'height 0.4s ease',
@@ -625,12 +664,13 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
                 <span style={{ fontSize: 11, fontWeight: item.level === 'high' ? 'bold' : 'normal', color: item.level === 'high' ? '#c0392b' : 'inherit' }}>
                   {item.hour}h
                 </span>
+                <small style={{ fontSize: 10, color: '#64748b' }}>{item.occupiedTables} bàn</small>
               </div>
             ))}
           </div>
 
-          <div style={{ marginTop: 12, padding: 10, background: '#f0f4fc', borderRadius: 6, fontSize: 13, color: '#103070' }}>
-            💡 <b>Nhận định vận hành AI:</b> Khung giờ cao điểm dự kiến rơi vào <b>17:00 – 20:00</b> (mức Cao $\ge 70\%$). Đề xuất quản lý bố trí đủ 2 nhân viên quầy trực hỗ trợ check-in và điều phối hàng chờ.
+          <div style={{ marginTop: 12, padding: '10px 14px', background: '#f0f4fc', borderRadius: 6, fontSize: 13, color: '#103070', lineHeight: 1.5 }}>
+            💡 <b>Nhận định vận hành AI ({new Date(selectedDate).toLocaleDateString('vi-VN')}):</b> {aiInsight}
           </div>
         </section>
       )}
