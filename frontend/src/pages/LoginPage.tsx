@@ -149,12 +149,6 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
     }
   };
 
-  const selectDemoAccount = (id: string, pass: string) => {
-    setIdentifier(id);
-    setPassword(pass);
-    setFormError('');
-  };
-
   return (
     <div className="login-wrapper">
       {/* CỘT TRÁI: BANNER THƯƠNG HIỆU & SLOGAN ĐẶC TẢ */}
@@ -295,52 +289,6 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
                 <button className="btn-auth-submit" type="submit" disabled={submitting}>
                   {submitting ? 'Đang xác thực...' : 'Đăng Nhập Vào Hệ Thống →'}
                 </button>
-              </div>
-
-              {/* TÀI KHOẢN MẪU ĐỂ TEST NHANH */}
-              <div className="quick-demo-box">
-                <div className="quick-demo-title">
-                  <span>⚡ Đăng nhập nhanh tài khoản Quản trị viên (Admin):</span>
-                </div>
-                <div className="demo-pills-grid">
-                  <button
-                    type="button"
-                    className="demo-pill admin"
-                    onClick={() => selectDemoAccount('admin@pingpongbros.vn', 'admin123')}
-                    title="Tài khoản Quản trị viên tối cao: Toàn quyền quản lý Sân, Doanh thu, Cấu hình"
-                    style={{ gridColumn: 'span 2' }}
-                  >
-                    <b>🛡️ Admin</b>
-                    <small>admin@pingpongbros.vn / admin123</small>
-                  </button>
-                  <button
-                    type="button"
-                    className="demo-pill staff"
-                    onClick={() => selectDemoAccount('nhanvien@pingpongbros.vn', '123456')}
-                    title="Nhân viên vận hành sân, check-in, check-out"
-                  >
-                    <b>Nhân viên</b>
-                    <small>Staff</small>
-                  </button>
-                  <button
-                    type="button"
-                    className="demo-pill coach"
-                    onClick={() => selectDemoAccount('giaovien@pingpongbros.vn', '123456')}
-                    title="Giáo viên đặt lịch lớp học"
-                  >
-                    <b>Giáo viên</b>
-                    <small>Coach</small>
-                  </button>
-                  <button
-                    type="button"
-                    className="demo-pill guest"
-                    onClick={() => selectDemoAccount('vanglai@gmail.com', '123456')}
-                    title="Khách vãng lai"
-                  >
-                    <b>Khách</b>
-                    <small>Guest</small>
-                  </button>
-                </div>
               </div>
             </form>
           ) : (
