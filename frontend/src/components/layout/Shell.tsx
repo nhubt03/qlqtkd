@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react';
 import type { Role, User } from '../../types';
 import { venueNow } from '../../utils/time';
 
-export type PageId = 'san' | 'goi' | 'hv' | 'lop' | 'khach' | 'nhansu' | 'hotro' | 'doanh' | 'cauhinh';
+export type PageId = 'san' | 'goi' | 'hv' | 'lop' | 'khach' | 'doanh' | 'cauhinh';
 
 export const menus: Record<Role, [PageId, string][]> = {
   GUEST: [['san', 'Sân'], ['goi', 'Gói tháng']],
   MEMBER: [['san', 'Sân'], ['hv', 'Góc Hội viên']],
   TEACHER: [['san', 'Sân']],
-  STAFF: [['san', 'Sân'], ['khach', 'Góc Hội viên'], ['hotro', 'Hỗ trợ khách'], ['doanh', 'Thống kê']],
-  MANAGER: [['san', 'Sân'], ['lop', 'Lớp học'], ['khach', 'Khách tháng'], ['nhansu', 'Nhân viên'], ['hotro', 'Hỗ trợ khách'], ['doanh', 'Doanh thu'], ['cauhinh', 'Cấu hình']],
+  STAFF: [['san', 'Sân'], ['khach', 'Khách tháng'], ['doanh', 'Thống kê']],
+  MANAGER: [['san', 'Sân'], ['lop', 'Lớp học'], ['khach', 'Khách tháng'], ['doanh', 'Doanh thu'], ['cauhinh', 'Cấu hình']],
 };
 
 const roleLabels: Record<Role, string> = {

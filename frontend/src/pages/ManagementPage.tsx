@@ -23,8 +23,6 @@ export function ManagementPage({ page, dashboard, user, onNotify, onOpenModal }:
   if (page === 'hv') return <MemberHome member={dashboard.members.find((member) => member.id === user.memberId)} config={dashboard.config} />;
   if (page === 'lop') return <ClassesPage dashboard={dashboard} onNotify={onNotify} />;
   if (page === 'khach') return <MembersPage members={dashboard.members} onOpenModal={onOpenModal} />;
-  if (page === 'nhansu') return <StaffPage users={dashboard.users} onNotify={onNotify} />;
-  if (page === 'hotro') return <SupportPage />;
   if (page === 'doanh') return <StatisticsPage dashboard={dashboard} canSeeForecast={user.role === 'MANAGER'} onNotify={onNotify} />;
   return <SettingsPage dashboard={dashboard} onNotify={onNotify} />;
 }
@@ -131,26 +129,7 @@ function MembersPage({ members, onOpenModal }: { members: Member[]; onOpenModal:
   );
 }
 
-function StaffPage({ users, onNotify }: { users: User[]; onNotify: (message: string) => void }) {
-  const staff = users.filter((item) => item.role === 'STAFF');
-  return (
-    <>
-      <div className="pg-h"><div><h2>Tài khoản nhân viên</h2><p>Danh sách tài khoản nhân viên theo dữ liệu API.</p></div><button className="btn red" type="button" onClick={() => onNotify('API hiện tại chưa hỗ trợ tạo tài khoản nhân viên.')}>Thêm nhân viên</button></div>
-      <section className="card ovf"><table><thead><tr><th>Nhân viên</th><th>SĐT / Email</th><th>Trạng thái</th><th /></tr></thead>
-        <tbody>{staff.map((item) => <tr key={item.id}><td><b>{item.name}</b></td><td>{item.phone}<br /><small className="hint">{item.email}</small></td><td><span className="tag t-ok">Đang hoạt động</span></td><td><button className="btn sm ghost" type="button" onClick={() => onNotify('API hiện tại chưa hỗ trợ quản lý mật khẩu/tài khoản.')}>Quản lý</button></td></tr>)}</tbody>
-      </table></section>
-    </>
-  );
-}
 
-function SupportPage() {
-  return (
-    <>
-      <div className="pg-h"><div><h2>Hỗ trợ khách</h2><p>Yêu cầu hỗ trợ và hội thoại khách hàng.</p></div></div>
-      <div className="tk-grid"><section className="card"><ul className="res-list"><li>Chưa có yêu cầu hỗ trợ.</li></ul></section><section className="card"><p className="hint">API hiện tại chưa cung cấp dữ liệu ticket hoặc thao tác phản hồi.</p></section></div>
-    </>
-  );
-}
 
 function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: DashboardResponse; canSeeForecast: boolean; onNotify: (message: string) => void }) {
   const payments = dashboard.payments;
