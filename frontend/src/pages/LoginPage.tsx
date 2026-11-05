@@ -253,7 +253,7 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
                       className="auth-input"
                       id="login-id"
                       autoComplete="username"
-                      placeholder="quanly@pingpongbros.vn hoặc 0905123456"
+                      placeholder="admin@pingpongbros.vn hoặc 0905123456"
                       value={identifier}
                       onChange={(e) => setIdentifier(e.target.value)}
                     />
@@ -300,23 +300,24 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
               {/* TÀI KHOẢN MẪU ĐỂ TEST NHANH */}
               <div className="quick-demo-box">
                 <div className="quick-demo-title">
-                  <span>⚡ Thử nghiệm nhanh tài khoản các vai trò:</span>
+                  <span>⚡ Đăng nhập nhanh tài khoản Quản trị viên (Admin):</span>
                 </div>
                 <div className="demo-pills-grid">
                   <button
                     type="button"
                     className="demo-pill admin"
-                    onClick={() => selectDemoAccount('quanly@pingpongbros.vn', '123456')}
-                    title="Đầy đủ quyền quản trị: Sân, Doanh thu, Cấu hình"
+                    onClick={() => selectDemoAccount('admin@pingpongbros.vn', 'admin123')}
+                    title="Tài khoản Quản trị viên tối cao: Toàn quyền quản lý Sân, Doanh thu, Cấu hình"
+                    style={{ gridColumn: 'span 2' }}
                   >
-                    <b>Quản lý</b>
-                    <small>Admin</small>
+                    <b>🛡️ Admin</b>
+                    <small>admin@pingpongbros.vn / admin123</small>
                   </button>
                   <button
                     type="button"
                     className="demo-pill staff"
                     onClick={() => selectDemoAccount('nhanvien@pingpongbros.vn', '123456')}
-                    title="Vận hành sân, check-in, check-out"
+                    title="Nhân viên vận hành sân, check-in, check-out"
                   >
                     <b>Nhân viên</b>
                     <small>Staff</small>
@@ -325,27 +326,18 @@ export function LoginPage({ error, onLogin }: LoginPageProps) {
                     type="button"
                     className="demo-pill coach"
                     onClick={() => selectDemoAccount('giaovien@pingpongbros.vn', '123456')}
-                    title="Đặt bàn lớp học & xem thù lao"
+                    title="Giáo viên đặt lịch lớp học"
                   >
                     <b>Giáo viên</b>
                     <small>Coach</small>
                   </button>
                   <button
                     type="button"
-                    className="demo-pill member"
-                    onClick={() => selectDemoAccount('khachthang@gmail.com', '123456')}
-                    title="Hội viên gói tháng, thẻ thành viên"
-                  >
-                    <b>Khách tháng</b>
-                    <small>Member</small>
-                  </button>
-                  <button
-                    type="button"
                     className="demo-pill guest"
                     onClick={() => selectDemoAccount('vanglai@gmail.com', '123456')}
-                    title="Khách vãng lai đặt bàn linh hoạt"
+                    title="Khách vãng lai"
                   >
-                    <b>Vãng lai</b>
+                    <b>Khách</b>
                     <small>Guest</small>
                   </button>
                 </div>
