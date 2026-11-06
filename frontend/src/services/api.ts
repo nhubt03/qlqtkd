@@ -41,6 +41,7 @@ export async function createBooking(input: {
   people: number;
   amount: number;
   memberId: number | null;
+  checkInImmediately?: boolean;
   status?: 'PENDING' | 'CONFIRMED' | 'CHECKED_IN';
 }): Promise<any> {
   const { data } = await api.post('/bookings', input);

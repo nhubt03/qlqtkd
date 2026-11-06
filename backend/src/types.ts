@@ -44,6 +44,8 @@ export interface Booking {
   status: 'PENDING' | 'CONFIRMED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'CANCELLED';
   amount: number;
   memberId?: number | null;
+  checkedInAt?: string | null;
+  checkedOutAt?: string | null;
 }
 
 export interface ClassSession {

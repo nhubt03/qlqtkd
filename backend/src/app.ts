@@ -257,6 +257,7 @@ const handleBookingCreation = (req: express.Request, res: express.Response) => {
     }
   }
 
+  const isImmediateCheckIn = Boolean(body.checkInImmediately || body.status === 'CHECKED_IN');
   const booking = {
     id: dashboardData.bookings.length + 1,
     tableId: assignedTableId,
@@ -267,9 +268,11 @@ const handleBookingCreation = (req: express.Request, res: express.Response) => {
     startTime,
     duration,
     people,
-    status: (body.status || 'CONFIRMED') as any,
+    status: (isImmediateCheckIn ? 'CHECKED_IN' : (body.status || 'CONFIRMED')) as any,
     amount: bookingType === 'MEMBER' ? 0 : Number(body.amount || body.tien || (people * duration * dashboardData.config.courtPrice)),
     memberId: body.memberId ?? null,
+    checkedInAt: isImmediateCheckIn ? new Date().toISOString() : null,
+    checkedOutAt: null,
   };
 
   dashboardData.bookings.push(booking);
@@ -318,6 +321,7 @@ const handleCheckIn = (req: express.Request, res: express.Response) => {
   }
 
   booking.status = 'CHECKED_IN';
+  booking.checkedInAt = new Date().toISOString();
   const table = dashboardData.tables.find((t) => t.tableNumber === booking.tableId);
   if (table) {
     table.status = 'busy';
@@ -340,6 +344,7 @@ const handleCheckOut = (req: express.Request, res: express.Response) => {
   }
 
   booking.status = 'CHECKED_OUT';
+  booking.checkedOutAt = new Date().toISOString();
   const table = dashboardData.tables.find((t) => t.tableNumber === booking.tableId);
   if (table) {
     table.status = 'available';
@@ -349,7 +354,10 @@ const handleCheckOut = (req: express.Request, res: express.Response) => {
   let message = '';
 
   if (booking.type === 'WALK_IN') {
-    finalAmount = booking.amount > 0 ? booking.amount : (booking.people * booking.duration * dashboardData.config.courtPrice);
+    const checkInTime = booking.checkedInAt ? new Date(booking.checkedInAt).getTime() : new Date(booking.startTime).getTime();
+    const actualHours = Math.max(1, Math.round(((Date.now() - checkInTime) / 3600000) * 10) / 10);
+    const billableHours = Math.max(booking.duration, Math.ceil(actualHours));
+    finalAmount = booking.amount > 0 && billableHours === booking.duration ? booking.amount : (booking.people * billableHours * dashboardData.config.courtPrice);
     message = `Check-out thành công. Thu tiền khách vãng lai: ${finalAmount.toLocaleString('vi-VN')}đ.`;
     dashboardData.payments.push({
       id: dashboardData.payments.length + 1,

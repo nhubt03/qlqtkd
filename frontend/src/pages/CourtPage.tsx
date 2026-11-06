@@ -45,6 +45,7 @@ export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
   const [search, setSearch] = useState('');
   const [data, setData] = useState(dashboard);
   const [successModal, setSuccessModal] = useState<BookingSuccessInfo | null>(null);
+  const [walkInCheckoutTarget, setWalkInCheckoutTarget] = useState<{ booking: Booking; tableNumber: number } | null>(null);
   const viewedAt = live ? venueNow() : new Date(`${date}T${time || '06:00'}:00`);
 
   // Polling tự động cập nhật bản đồ sân thời gian thực mỗi 5 giây theo yêu cầu phi chức năng mục 6.4
@@ -346,7 +347,15 @@ export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
         <div className="col">
           <section className="card" aria-label={isStaff && selected ? 'Chi tiết bàn' : 'Đặt bàn'}>
             {isStaff && selected
-              ? <CourtDetail table={selected} status={getStatus(selected)} config={data.config} onBack={() => setSelectedTable(null)} onCheckIn={handleCheckIn} onCheckOut={handleCheckOut} />
+              ? <CourtDetail
+                  table={selected}
+                  status={getStatus(selected)}
+                  config={data.config}
+                  onBack={() => setSelectedTable(null)}
+                  onCheckIn={handleCheckIn}
+                  onCheckOut={handleCheckOut}
+                  onOpenWalkInCheckout={(target) => setWalkInCheckoutTarget(target)}
+                />
               : user.role === 'TEACHER'
                 ? <ClassRequest config={data.config} onNotify={onNotify} onRefresh={refresh} user={user} />
                 : <BookingForm dashboard={data} user={user} onNotify={onNotify} onRefresh={refresh} onSuccessBooking={(info) => setSuccessModal(info)} />}
@@ -359,27 +368,121 @@ export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
         </div>
       </div>
       {successModal && <BookingSuccessModal info={successModal} onClose={() => setSuccessModal(null)} />}
+
+      {/* MODAL CHECK-OUT CHO KHÁCH VÃNG LAI: HIỂN THỊ SỐ TIỀN CẦN THANH TOÁN TRƯỚC KHI XÁC NHẬN */}
+      {walkInCheckoutTarget && (() => {
+        const { booking, tableNumber } = walkInCheckoutTarget;
+        const checkInTime = booking.checkedInAt ? new Date(booking.checkedInAt).getTime() : new Date(booking.startTime).getTime();
+        const nowTime = Date.now();
+        const actualHours = Math.max(1, Math.round(((nowTime - checkInTime) / 3600000) * 10) / 10);
+        const billableHours = Math.max(booking.duration, Math.ceil(actualHours));
+        const payableAmount = booking.amount > 0 && billableHours === booking.duration ? booking.amount : (booking.people * billableHours * data.config.courtPrice);
+
+        return (
+          <div className="mask" role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div className="card" style={{ width: 480, maxWidth: '92%', padding: 24, borderRadius: 12, background: '#fff' }}>
+              <h3 style={{ marginTop: 0, color: '#b91c1c', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>💳 Xác nhận Check-out & Thu tiền (Khách vãng lai)</span>
+              </h3>
+              <p style={{ fontSize: 13, color: '#64748b', marginBottom: 14 }}>
+                Vui lòng kiểm tra số tiền cần thu trước khi xác nhận hoàn tất check-out và giải phóng bàn.
+              </p>
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 14, marginBottom: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr', gap: '6px 12px', fontSize: 14 }}>
+                  <span style={{ color: '#64748b' }}>Khách hàng:</span>
+                  <b>{booking.customerName} ({booking.phone || 'Không có SĐT'})</b>
+                  <span style={{ color: '#64748b' }}>Bàn sử dụng:</span>
+                  <b>Bàn {tableNumber}</b>
+                  <span style={{ color: '#64748b' }}>Số người chơi:</span>
+                  <b>{booking.people} người</b>
+                  <span style={{ color: '#64748b' }}>Giờ check-in:</span>
+                  <span>{new Date(checkInTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</span>
+                  <span style={{ color: '#64748b' }}>Giờ check-out:</span>
+                  <span>{new Date(nowTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} (Hiện tại)</span>
+                  <span style={{ color: '#64748b' }}>Thời lượng tính phí:</span>
+                  <b>{billableHours} giờ</b>
+                  <span style={{ color: '#64748b' }}>Đơn giá sân:</span>
+                  <span>{data.config.courtPrice.toLocaleString('vi-VN')}đ / người / giờ</span>
+                </div>
+
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1.5px dashed #cbd5e1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>SỐ TIỀN CẦN THU:</span>
+                  <span style={{ fontSize: 24, fontWeight: 900, color: '#dc2626' }}>{payableAmount.toLocaleString('vi-VN')}đ</span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button className="btn ghost" type="button" onClick={() => setWalkInCheckoutTarget(null)}>Quay lại</button>
+                <button
+                  className="btn"
+                  style={{ background: '#16a34a', color: '#fff', fontWeight: 'bold' }}
+                  type="button"
+                  onClick={async () => {
+                    const bId = booking.id;
+                    setWalkInCheckoutTarget(null);
+                    await handleCheckOut(bId);
+                  }}
+                >
+                  ✓ Xác nhận đã thu {payableAmount.toLocaleString('vi-VN')}đ & Hoàn tất Check-out
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 }
 
-function CourtDetail({ table, status, config, onBack, onCheckIn, onCheckOut }: { table: TableInfo; status: CourtStatus; config: DashboardResponse['config']; onBack: () => void; onCheckIn: (id: number) => void; onCheckOut: (id: number) => void }) {
+function CourtDetail({
+  table,
+  status,
+  config,
+  onBack,
+  onCheckIn,
+  onCheckOut,
+  onOpenWalkInCheckout,
+}: {
+  table: TableInfo;
+  status: CourtStatus;
+  config: DashboardResponse['config'];
+  onBack: () => void;
+  onCheckIn: (id: number) => void;
+  onCheckOut: (id: number) => void;
+  onOpenWalkInCheckout: (target: { booking: Booking; tableNumber: number }) => void;
+}) {
   const booking = status.booking;
+  const isPlaying = booking && (booking.status === 'CHECKED_IN' || status.state === 'choi');
+  const isBooked = booking && (booking.status === 'CONFIRMED' || booking.status === 'PENDING' || status.state === 'dat');
+
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-        <div><small className="hint">Chi tiết bàn</small><div className="pill-big">{table.tableNumber}</div></div>
+        <div>
+          <small className="hint">Chi tiết bàn</small>
+          <div className="pill-big" style={{ fontSize: 22, fontWeight: 'bold' }}>Bàn {table.tableNumber}</div>
+        </div>
         <span className={`tag st-${status.state}`}>{stateLabels[status.state]}</span>
       </div>
+
       {booking ? (
-        <dl className="det">
-          <dt>Tên khách</dt><dd>{booking.customerName}</dd>
-          <dt>Loại khách</dt><dd>{booking.type === 'MEMBER' ? 'Khách tháng' : booking.type === 'TEACHER' ? 'Giáo viên' : 'Khách vãng lai'}</dd>
-          <dt>Số người chơi</dt><dd>{booking.people}</dd>
-          <dt>Thời gian bắt đầu</dt><dd>{timeText(new Date(booking.startTime))}</dd>
+        <dl className="det" style={{ marginTop: 12 }}>
+          <dt>Họ tên khách</dt><dd><b>{booking.customerName}</b></dd>
+          <dt>Số điện thoại</dt><dd>{booking.phone || '—'}</dd>
+          <dt>Email</dt><dd>{booking.email || '—'}</dd>
+          <dt>Loại khách</dt><dd>{booking.type === 'MEMBER' ? 'Khách tháng (Hội viên)' : booking.type === 'TEACHER' ? 'Giáo viên' : 'Khách vãng lai'}</dd>
+          <dt>Số bàn đã đặt</dt><dd><b>Bàn {table.tableNumber}</b> (Sức chứa {table.capacity} người)</dd>
+          <dt>Số người chơi</dt><dd><b>{booking.people} người</b></dd>
+          <dt>Ngày & Giờ đặt</dt><dd>{new Date(booking.startTime).toLocaleDateString('vi-VN')} lúc {new Date(booking.startTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</dd>
           <dt>Thời lượng</dt><dd>{booking.duration} giờ</dd>
-          <dt>Dự kiến kết thúc</dt><dd>{timeText(new Date(status.end ?? Date.now()))}</dd>
-          <dt>Trạng thái đặt</dt><dd>{bookingLabels[booking.status][0]}</dd>
+          {booking.checkedInAt && (
+            <>
+              <dt>Check-in thực tế</dt>
+              <dd style={{ color: '#16a34a', fontWeight: 'bold' }}>
+                {new Date(booking.checkedInAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+              </dd>
+            </>
+          )}
+          <dt>Trạng thái</dt><dd><span className={`tag ${booking.status === 'CHECKED_IN' ? 't-ok' : 't-am'}`}>{bookingLabels[booking.status][0]}</span></dd>
         </dl>
       ) : status.state === 'lop' ? (
         <p className="hint" style={{ margin: '10px 0' }}>{status.className} đang sử dụng bàn này. Lớp kết thúc lúc {status.end}:00.</p>
@@ -391,15 +494,33 @@ function CourtDetail({ table, status, config, onBack, onCheckIn, onCheckOut }: {
         <p className="hint" style={{ margin: '10px 0' }}>Ngoài giờ mở cửa ({String(config.openingHour).padStart(2, '0')}:00 – {String(config.closingHour).padStart(2, '0')}:00).</p>
       )}
 
-      {/* Thao tác Check-in / Check-out trực tiếp trên màn hình sân */}
-      {booking && (booking.status === 'CHECKED_IN' || status.state === 'choi') && (
-        <button className="btn red" style={{ width: '100%', marginTop: 12 }} type="button" onClick={() => onCheckOut(booking.id)}>
-          Check-out và kết thúc lượt
+      {/* Nút check-in nếu trạng thái bàn là "Đã đặt" */}
+      {booking && isBooked && !isPlaying && (
+        <button
+          className="btn"
+          style={{ width: '100%', marginTop: 14, background: '#2563eb', color: '#fff', fontWeight: 'bold' }}
+          type="button"
+          onClick={() => onCheckIn(booking.id)}
+        >
+          Check-in nhận bàn
         </button>
       )}
-      {booking && (booking.status === 'CONFIRMED' || booking.status === 'PENDING') && (
-        <button className="btn" style={{ width: '100%', marginTop: 12, background: 'var(--brand)' }} type="button" onClick={() => onCheckIn(booking.id)}>
-          Check-in nhận bàn
+
+      {/* Nút check-out nếu trạng thái bàn là "Đang chơi" */}
+      {booking && isPlaying && (
+        <button
+          className="btn red"
+          style={{ width: '100%', marginTop: 14, fontWeight: 'bold' }}
+          type="button"
+          onClick={() => {
+            if (booking.type === 'WALK_IN') {
+              onOpenWalkInCheckout({ booking, tableNumber: table.tableNumber });
+            } else {
+              onCheckOut(booking.id);
+            }
+          }}
+        >
+          {booking.type === 'WALK_IN' ? 'Check-out & Tính tiền' : 'Check-out hoàn tất'}
         </button>
       )}
 
@@ -482,6 +603,8 @@ function BookingForm({ dashboard, user, onNotify, onRefresh, onSuccessBooking }:
   const [noTableWarning, setNoTableWarning] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [forceWalkIn, setForceWalkIn] = useState(false);
+  const [checkInImmediately, setCheckInImmediately] = useState(false);
+  const isStaff = user.role === 'STAFF' || user.role === 'MANAGER';
 
   // Kiểm tra thông tin gói của khách tháng
   const memberInfo = dashboard.members.find((m) => m.id === user.memberId || m.phone === user.phone);
@@ -594,11 +717,12 @@ function BookingForm({ dashboard, user, onNotify, onRefresh, onSuccessBooking }:
         phone,
         email,
         type: isWalkIn ? 'WALK_IN' : 'MEMBER',
-        startTime: start.toISOString(),
+        startTime: checkInImmediately ? new Date().toISOString() : start.toISOString(),
         duration,
         people,
         amount: isWalkIn ? cost : 0,
         memberId: isWalkIn ? null : (user.memberId ?? null),
+        checkInImmediately,
       });
       await onRefresh();
       onSuccessBooking({
@@ -607,13 +731,13 @@ function BookingForm({ dashboard, user, onNotify, onRefresh, onSuccessBooking }:
         customerName: name.trim(),
         phone,
         date: bookingDate,
-        startTime,
+        startTime: checkInImmediately ? timeText(new Date()) : startTime,
         duration,
         people,
         amount: isWalkIn ? cost : 0,
         isMember: !isWalkIn,
       });
-      onNotify(`Đặt bàn thành công: Bàn ${freeTableNumber} · ${bookingDate} ${startTime} (${duration} giờ).`);
+      onNotify(checkInImmediately ? `Đã đặt bàn và check-in Bàn ${freeTableNumber} thành công theo thời gian thực!` : `Đặt bàn thành công: Bàn ${freeTableNumber} · ${bookingDate} ${startTime} (${duration} giờ).`);
     } catch (reason: any) {
       const msg = reason?.response?.data?.message || (reason instanceof Error ? reason.message : 'Không thể tạo lượt đặt.');
       onNotify(msg);
@@ -723,7 +847,26 @@ function BookingForm({ dashboard, user, onNotify, onRefresh, onSuccessBooking }:
               ? `Khách tháng: Thời lượng ${duration} giờ sẽ tính ${estimatedTurns} lượt (còn lại ${leftTurns}/${memberInfo?.totalTurns ?? 30} lượt). Không thu tiền mặt.`
               : `Tạm tính: ${people} người × ${duration} giờ × ${money(dashboard.config.courtPrice)} = ${money(cost)}`}
           </div>
-          <div className="full"><button className="btn red" style={{ width: '100%' }} type="submit" disabled={submitting}>{submitting ? 'Đang đặt...' : 'Đặt bàn'}</button></div>
+          {isStaff && (
+            <div className="full" style={{ padding: '10px 14px', background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 600, color: '#166534', margin: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={checkInImmediately}
+                  onChange={(e) => setCheckInImmediately(e.target.checked)}
+                />
+                <span>⚡ Khách chơi trực tiếp (Check-in nhận bàn ngay bây giờ)</span>
+              </label>
+              <small style={{ display: 'block', color: '#15803d', marginTop: 4, fontSize: 12 }}>
+                Hệ thống sẽ lưu thời gian thực lúc check-in và chuyển bàn sang trạng thái "Đang chơi".
+              </small>
+            </div>
+          )}
+          <div className="full">
+            <button className="btn red" style={{ width: '100%' }} type="submit" disabled={submitting}>
+              {submitting ? 'Đang xử lý...' : checkInImmediately ? 'Đặt bàn & Check-in ngay' : 'Đặt bàn'}
+            </button>
+          </div>
         </div>
       </form>
     </>
