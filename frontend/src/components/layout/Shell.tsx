@@ -4,7 +4,7 @@ import type { Role, User } from '../../types';
 export type PageId = 'san' | 'goi' | 'hv' | 'lop' | 'khach' | 'doanh' | 'cauhinh';
 
 export const menus: Record<Role, [PageId, string][]> = {
-  GUEST: [['san', 'Sân'], ['goi', 'Gói tháng']],
+  GUEST: [['san', 'Sân']],
   MEMBER: [['san', 'Sân'], ['hv', 'Góc Hội viên']],
   TEACHER: [['san', 'Sân'], ['lop', 'Lớp dạy của tôi']],
   STAFF: [['san', 'Sân'], ['khach', 'Khách tháng'], ['doanh', 'Thống kê']],

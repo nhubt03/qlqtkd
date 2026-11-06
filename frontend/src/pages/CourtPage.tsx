@@ -127,6 +127,23 @@ export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
     }
   };
 
+  const upcomingBookings = useMemo(() => {
+    const now = new Date();
+    return data.bookings.filter((b) => {
+      const isUserBooking =
+        (user.phone && b.phone === user.phone) ||
+        (user.email && b.email === user.email) ||
+        (b.customerName && b.customerName.toLowerCase() === user.name.toLowerCase());
+      if (!isUserBooking) return false;
+      if (b.status !== 'CONFIRMED') return false;
+
+      const start = new Date(b.startTime);
+      const diffMs = start.getTime() - now.getTime();
+      const diffMinutes = Math.floor(diffMs / 60000);
+      return diffMinutes >= -15 && diffMinutes <= 30;
+    });
+  }, [data.bookings, user]);
+
   return (
     <>
       <div className="pg-h">
@@ -140,39 +157,97 @@ export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
         </div>
       </div>
 
-      {/* QUẢNG CÁO GÓI THÁNG DÀNH CHO KHÁCH VÃNG LAI (THEO ĐẶC TẢ NGHIỆP VỤ) */}
-      {user.role === 'GUEST' && (
-        <section className="card" style={{ marginBottom: 16, background: 'linear-gradient(135deg, #0d3b66, #1d4ba8)', color: '#fff', borderRadius: 12, padding: '18px 20px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
+      {/* NHẮC NHỞ LỊCH ĐẶT BÀN TRƯỚC 30 PHÚT CHO KHÁCH */}
+      {upcomingBookings.map((b) => {
+        const diffMinutes = Math.floor((new Date(b.startTime).getTime() - Date.now()) / 60000);
+        const timeText = diffMinutes > 0 ? `còn khoảng ${diffMinutes} phút nữa` : `đang trong khung giờ chơi`;
+        return (
+          <div
+            key={b.id}
+            className="alert info"
+            style={{
+              marginBottom: 16,
+              background: '#eff6ff',
+              border: '1.5px solid #2563eb',
+              borderRadius: 10,
+              padding: '14px 18px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              boxShadow: '0 4px 12px rgba(37,99,235,0.08)'
+            }}
+          >
             <div>
-              <span className="tag" style={{ background: '#f39c12', color: '#fff', fontWeight: 'bold', marginBottom: 4 }}>ƯU ĐÃI HỘI VIÊN</span>
-              <h3 style={{ margin: '4px 0', fontSize: 18, color: '#fff' }}>Đăng ký Gói Tháng - Tiết kiệm đến 40% chi phí chơi bóng bàn!</h3>
-              <p style={{ margin: 0, fontSize: 13, opacity: 0.9 }}>
-                Khách tháng không cần thanh toán lẻ từng lần chơi, được ưu tiên giữ bàn và tự do chơi theo lượt linh hoạt.
-              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <span className="tag t-am" style={{ fontWeight: 'bold' }}>🔔 NHẮC NHỞ LỊCH ĐẶT BÀN (TRƯỚC 30 PHÚT)</span>
+                <span style={{ fontWeight: 600, color: '#1d4ed8' }}>Đơn #{b.id}</span>
+              </div>
+              <div style={{ fontSize: 14, color: '#1e293b' }}>
+                Chào bạn <b>{b.customerName}</b>, bạn có lịch đặt tại <b>Bàn {b.tableId}</b> vào lúc <b>{new Date(b.startTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</b> ({timeText}).
+                Vui lòng đến trước 10–15 phút để làm thủ tục check-in nhận bàn nhé!
+              </div>
             </div>
-            <button className="btn" style={{ background: '#e74c3c', color: '#fff', border: 'none', padding: '8px 16px', fontWeight: 'bold' }} type="button" onClick={() => onNotify('Vui lòng gặp nhân viên quầy hoặc liên hệ Hotline 0918 901 284 để đăng ký gói tháng!')}>
-              Đăng ký ngay tại quầy
+            <button className="btn sm" type="button" onClick={() => setSelectedTable(b.tableId)}>
+              Xem vị trí bàn {b.tableId}
             </button>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-            <div style={{ background: 'rgba(255,255,255,0.12)', padding: '12px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.2)' }}>
-              <div style={{ fontWeight: 'bold', fontSize: 15 }}>Gói Tháng P1 (30 Lượt)</div>
-              <div style={{ fontSize: 20, fontWeight: 900, color: '#f1c40f', margin: '4px 0' }}>900.000 đ</div>
-              <small style={{ opacity: 0.85, fontSize: 11 }}>• 30 lượt / 30 ngày (30k/lượt 2h)<br />• Tiết kiệm 25% so với vé lẻ</small>
+        );
+      })}
+
+      {/* GIỚI THIỆU CÁC GÓI THÁNG DÀNH CHO KHÁCH (CHUYỂN VÀO MỤC SÂN) */}
+      {user.role === 'GUEST' && (
+        <section className="card" style={{ marginBottom: 16, background: 'linear-gradient(135deg, #0f172a, #1e3a8a)', color: '#fff', borderRadius: 12, padding: '20px 22px', boxShadow: '0 4px 16px rgba(15,23,42,0.15)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
+            <div>
+              <span className="tag" style={{ background: '#f59e0b', color: '#000', fontWeight: 'bold', marginBottom: 6 }}>TIẾT KIỆM ĐẾN 40%</span>
+              <h3 style={{ margin: '4px 0', fontSize: 19, color: '#fff' }}>Gói tháng Hội viên PingPongBros</h3>
+              <p style={{ margin: 0, fontSize: 13, opacity: 0.9 }}>
+                Đăng ký gói tháng để tận hưởng mức giá ưu đãi chỉ từ 11.106đ mỗi lượt 2 giờ. Lượt chơi được cộng dồn khi gia hạn!
+              </p>
             </div>
-            <div style={{ background: 'rgba(255,255,255,0.18)', padding: '12px 14px', borderRadius: 8, border: '1px solid #f1c40f' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontWeight: 'bold', fontSize: 15 }}>Gói Tháng P3 (90 Lượt)</span>
-                <span className="tag" style={{ background: '#f1c40f', color: '#000', fontSize: 10, fontWeight: 'bold' }}>PHỔ BIẾN</span>
+            <button className="btn" style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '10px 18px', fontWeight: 'bold' }} type="button" onClick={() => onNotify('Vui lòng gặp nhân viên quầy hoặc liên hệ Hotline 0918 901 284 để kích hoạt gói tháng!')}>
+              Đăng ký tại quầy ngay
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
+            {/* Gói 1 tháng */}
+            <div style={{ background: 'rgba(255,255,255,0.08)', padding: '16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)' }}>
+              <div style={{ fontWeight: 'bold', fontSize: 16 }}>Gói 1 tháng</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: '#fbbf24', margin: '6px 0' }}>449.000đ</div>
+              <div style={{ fontSize: 13, opacity: 0.95, lineHeight: 1.5 }}>
+                • <b>30 lượt</b> trong 30 ngày<br />
+                • <b>14.967đ</b> mỗi lượt 2 giờ<br />
+                • Chủ động đặt bàn linh hoạt
               </div>
-              <div style={{ fontSize: 20, fontWeight: 900, color: '#f1c40f', margin: '4px 0' }}>2.400.000 đ</div>
-              <small style={{ opacity: 0.85, fontSize: 11 }}>• 90 lượt / 90 ngày (26k/lượt 2h)<br />• Tiết kiệm 35% chi phí</small>
             </div>
-            <div style={{ background: 'rgba(255,255,255,0.12)', padding: '12px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.2)' }}>
-              <div style={{ fontWeight: 'bold', fontSize: 15 }}>Gói VIP P6 (180 Lượt)</div>
-              <div style={{ fontSize: 20, fontWeight: 900, color: '#f1c40f', margin: '4px 0' }}>4.500.000 đ</div>
-              <small style={{ opacity: 0.85, fontSize: 11 }}>• 180 lượt / 180 ngày (25k/lượt 2h)<br />• Ưu tiên chọn bàn đẹp</small>
+
+            {/* Gói 3 tháng */}
+            <div style={{ background: 'rgba(255,255,255,0.12)', padding: '16px', borderRadius: 10, border: '1.5px solid #60a5fa' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 'bold', fontSize: 16 }}>Gói 3 tháng</span>
+                <span className="tag" style={{ background: '#3b82f6', color: '#fff', fontSize: 10, fontWeight: 'bold' }}>PHỔ BIẾN</span>
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: '#fbbf24', margin: '6px 0' }}>1.149.000đ</div>
+              <div style={{ fontSize: 13, opacity: 0.95, lineHeight: 1.5 }}>
+                • <b>90 lượt</b> trong 90 ngày<br />
+                • <b>12.767đ</b> mỗi lượt 2 giờ<br />
+                • Tiết kiệm hơn cho người chơi đều đặn
+              </div>
+            </div>
+
+            {/* Gói 6 tháng */}
+            <div style={{ background: 'rgba(255,255,255,0.15)', padding: '16px', borderRadius: 10, border: '1.5px solid #f59e0b' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 'bold', fontSize: 16 }}>Gói 6 tháng</span>
+                <span className="tag" style={{ background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 'bold' }}>TIẾT KIỆM NHẤT</span>
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: '#fbbf24', margin: '6px 0' }}>1.999.000đ</div>
+              <div style={{ fontSize: 13, opacity: 0.95, lineHeight: 1.5 }}>
+                • <b>180 lượt</b> trong 180 ngày<br />
+                • <b>11.106đ</b> mỗi lượt 2 giờ<br />
+                • Tặng thêm quyền ưu tiên giữ bàn
+              </div>
             </div>
           </div>
         </section>
