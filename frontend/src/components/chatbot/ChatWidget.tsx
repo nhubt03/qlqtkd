@@ -174,8 +174,34 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
 
   const answer = (raw: string): { text: string; extracted?: ExtractedBooking; transferredToTeacher?: boolean } => {
     const text = raw.toLowerCase().trim();
+    const role = user.role;
 
-    // 1. Thử phân tích ý định đặt bàn bằng NLP
+    // Tính toán số liệu tài chính nội bộ phục vụ phân quyền
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const payments = dashboard.payments || [];
+    const todayPayments = payments.filter((p) => p.createdAt && p.createdAt.slice(0, 10) === todayStr);
+    const todayRev = todayPayments.reduce((sum, p) => sum + p.amount, 0);
+    const todayTxCount = todayPayments.length;
+
+    const dayOfWeek = (now.getDay() + 6) % 7;
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - dayOfWeek);
+    startOfWeek.setHours(0, 0, 0, 0);
+    const weekRev = payments
+      .filter((p) => new Date(p.createdAt) >= startOfWeek)
+      .reduce((sum, p) => sum + p.amount, 0);
+
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    const monthRev = payments
+      .filter((p) => {
+        const d = new Date(p.createdAt);
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      })
+      .reduce((sum, p) => sum + p.amount, 0);
+
+    // 1. Thử phân tích ý định đặt bàn bằng NLP (nếu là câu yêu cầu đặt bàn cụ thể)
     const bookingIntent = parseBookingIntent(raw);
     if (bookingIntent) {
       const CONFIDENCE_THRESHOLD = 70;
@@ -199,39 +225,173 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
       };
     }
 
-    // 2. Các câu hỏi nghiệp vụ thường gặp
-    if (/giá|gia|bao nhiêu|bao nhieu|chi phí|tiền/.test(text)) {
+    // 2. PHÂN QUYỀN CHATBOT THEO TÀI KHOẢN (MỤC 1)
+
+    // 2.1. Tra cứu DOANH THU & TÀI CHÍNH NỘI BỘ
+    if (/doanh thu|doanh so|doanh_thu|thu nhap|tiền thu|doanh số|thu nhập|doanhthu|doanh thu ngày|doanh thu tuần|doanh thu tháng/.test(text)) {
+      // Khách vãng lai & Khách tháng: TUYỆT ĐỐI KHÔNG ĐƯỢC XEM
+      if (role === 'GUEST' || role === 'MEMBER') {
+        return {
+          text: '⛔ **Quyền truy cập bị từ chối:** Khách hàng không có quyền xem thông tin doanh thu của câu lạc bộ. Khách hàng chỉ được hỏi về đặt bàn, giờ mở cửa, giá thuê bàn theo giờ, giá các gói hội viên và thông tin hội viên.',
+        };
+      }
+
+      // Giáo viên: TUYỆT ĐỐI KHÔNG ĐƯỢC XEM DOANH THU CLB
+      if (role === 'TEACHER') {
+        return {
+          text: '⛔ **Quyền truy cập bị từ chối:** Giáo viên không có quyền xem thông tin doanh thu của câu lạc bộ. Giáo viên chỉ được hỏi về giá lớp học, lịch học và đặt bàn phục vụ lớp học.',
+        };
+      }
+
+      // Nhân viên: ĐƯỢC HỎI DOANH THU CỦA NGÀY HIỆN TẠI - KHÔNG ĐƯỢC XEM THEO TUẦN HOẶC THÁNG
+      if (role === 'STAFF') {
+        if (/tuần|tuan|tháng|thang|quý|quy|năm|nam|toàn thời gian|tổng/.test(text)) {
+          return {
+            text: '⛔ **Giới hạn phân quyền Nhân viên:** Theo quy định bảo mật, tài khoản Nhân viên **chỉ được xem doanh thu của ngày hiện tại**. Không được xem doanh thu theo tuần hoặc tháng. Báo cáo tuần/tháng dành riêng cho Quản lý.',
+          };
+        }
+        // Doanh thu ngày hiện tại
+        return {
+          text: `📊 **Báo cáo Doanh thu Ngày hiện tại (${new Date().toLocaleDateString('vi-VN')}):**\n` +
+            `• Số tiền đã thu hôm nay: **${todayRev.toLocaleString('vi-VN')}đ**\n` +
+            `• Số giao dịch hôm nay: **${todayTxCount} giao dịch**\n\n` +
+            `*(Lưu ý bảo mật: Tài khoản Nhân viên không được quyền xem doanh thu theo tuần hoặc tháng).*`,
+        };
+      }
+
+      // Quản lý: ĐƯỢC HỎI TẤT CẢ THÔNG TIN HỆ THỐNG (DOANH THU THEO NGÀY, TUẦN, THÁNG)
+      if (role === 'MANAGER') {
+        return {
+          text: `📈 **Báo cáo Doanh thu Hệ thống (Toàn quyền Quản lý):**\n` +
+            `• **Doanh thu Hôm nay:** ${todayRev.toLocaleString('vi-VN')}đ (${todayTxCount} giao dịch)\n` +
+            `• **Doanh thu Tuần này:** ${weekRev.toLocaleString('vi-VN')}đ\n` +
+            `• **Doanh thu Tháng này:** ${monthRev.toLocaleString('vi-VN')}đ\n` +
+            `• **Tổng tích lũy:** ${dashboard.stats.totalRevenue.toLocaleString('vi-VN')}đ (${dashboard.payments.length} giao dịch).`,
+        };
+      }
+    }
+
+    // 2.2. Giáo viên hỏi về đặt bàn phục vụ lớp học
+    if (role === 'TEACHER' && (/đặt bàn|dat ban|phục vụ lớp|phuc vu lop|bàn dạy|ban day|khu dạy|khu day/.test(text))) {
       return {
-        text: `💰 Giá chơi lẻ: ${dashboard.config.courtPrice.toLocaleString('vi-VN')}đ/người/giờ (mặc định 2 giờ). Ví dụ 2 người chơi 2 giờ là ${(2 * 2 * dashboard.config.courtPrice).toLocaleString('vi-VN')}đ.\n` +
-          `Giáo viên: 250.000đ/lượt (2 tiếng).\n` +
-          `Gói tháng: 1 tháng (449.000đ), 3 tháng (1.149.000đ), 6 tháng (1.999.000đ).`,
+        text: `🏓 **Đặt bàn phục vụ lớp học (Dành cho Giáo viên):**\n` +
+          `• Giáo viên được quyền đăng ký đặt bàn phục vụ lớp học tại **khu dạy học (bàn 1 đến 4)**.\n` +
+          `• Mỗi lớp học được phân bổ 2 bàn trong thời lượng 2 giờ và **phải kết thúc trước ${dashboard.config.classCutoffHour}:00**.\n` +
+          `• Đơn đặt bàn lớp học cần gửi qua mục "Lớp học" để Quản lý phê duyệt trước khi diễn ra.`,
       };
     }
-    if (/giờ|mở cửa|mo cua|đóng cửa|dong cua/.test(text)) {
+
+    // 2.3. Tra cứu LỚP HỌC & GIÁ BUỔI DẠY
+    if (/lớp|lop|dạy|day|học|hoc|giáo viên|giao vien|thù lao|thu lao|lịch học|lich hoc/.test(text)) {
+      if (role === 'TEACHER') {
+        const myClasses = dashboard.classes.filter(
+          (c) => c.teacherName === user.name || (user.id && (c as any).teacherId === user.id)
+        );
+        const approved = myClasses.filter((c) => c.status === 'approved').length;
+        const pending = myClasses.filter((c) => c.status === 'pending').length;
+        const rejected = myClasses.filter((c) => c.status === 'rejected').length;
+
+        return {
+          text: `🎓 **Thông tin Lớp học & Thù lao của bạn (${user.name}):**\n` +
+            `• Giá lớp học (Thù lao): **250.000đ / buổi dạy 2 giờ** (chốt và chi trả cuối tháng).\n` +
+            `• Lịch học của bạn: ${approved} lớp đã duyệt, ${pending} lớp chờ duyệt, ${rejected} lớp từ chối.\n` +
+            `• Đặt bàn phục vụ lớp: Bàn 1-4 trước ${dashboard.config.classCutoffHour}:00.`,
+        };
+      }
+
+      if (role === 'MANAGER') {
+        const totalClasses = dashboard.classes.length;
+        const pendingCount = dashboard.classes.filter((c) => c.status === 'pending').length;
+        return {
+          text: `🎓 **Thông tin Lớp học Toàn hệ thống (Quản lý):**\n` +
+            `• Tổng số lớp: ${totalClasses} lớp.\n` +
+            `• Lớp chờ duyệt: **${pendingCount} lớp**.\n` +
+            `• Thù lao giáo viên: ${dashboard.config.teacherPrice ? dashboard.config.teacherPrice.toLocaleString('vi-VN') : '250.000'}đ / buổi dạy 2h.\n` +
+            `• Khu vực lớp: Bàn 1-4 trước ${dashboard.config.classCutoffHour}:00.`,
+        };
+      }
+
       return {
-        text: `⏰ Câu lạc bộ mở cửa từ ${String(dashboard.config.openingHour).padStart(2, '0')}:00 đến ${String(dashboard.config.closingHour).padStart(2, '0')}:00 hằng ngày.\n` +
-          `Bàn khu dạy học (dãy 1) mở cho khách sau ${dashboard.config.classCutoffHour}:00.`,
+        text: `🎓 **Thông tin Lớp học:** Các lớp bóng bàn do giáo viên giảng dạy tại bàn 1-4 trong 2 giờ và kết thúc trước ${dashboard.config.classCutoffHour}:00. Sau ${dashboard.config.classCutoffHour}:00 các bàn này mở cho khách tự do đặt.`,
       };
     }
-    if (/gói|tháng|hội viên|gia hạn|cộng dồn/.test(text)) {
-      return {
-        text: `🎟️ Gói tháng có 30 lượt/kỳ 30 ngày. Khi còn ≤5 lượt, hệ thống cảnh báo và nhân viên hỗ trợ gia hạn. Khi gia hạn, số lượt còn lại được CỘNG DỒN vào gói mới (không bị reset)!`,
-      };
+
+    // 2.4. Tra cứu THÔNG TIN HỘI VIÊN & CÁC GÓI HỘI VIÊN
+    if (/hội viên|hoi vien|thông tin hội viên|thẻ của tôi|the cua toi|gói của tôi|goi cua toi|lượt còn|luot con|gói tháng|goi thang/.test(text)) {
+      if (role === 'MEMBER') {
+        const mem = dashboard.members.find((m) => m.id === user.memberId || m.phone === user.phone || m.email === user.email);
+        if (mem) {
+          const left = Math.max(0, mem.totalTurns - mem.usedTurns);
+          return {
+            text: `🎟️ **Thông tin Hội viên của bạn (${mem.name}):**\n` +
+              `• Gói đang dùng: **${mem.packageType.toUpperCase()}** (${mem.totalTurns} lượt)\n` +
+              `• Lượt chơi còn lại: **${left} / ${mem.totalTurns} lượt**\n` +
+              `• Thời hạn: từ ${new Date(mem.startDate).toLocaleDateString('vi-VN')} đến ${new Date(mem.endDate).toLocaleDateString('vi-VN')}\n` +
+              `• Trạng thái: ${left === 0 ? '⚠️ Hết lượt (vẫn có thể đặt sân và trả tiền mặt theo lượt)' : left <= 5 ? '⚠️ Sắp hết lượt (hãy gia hạn để cộng dồn)' : '✓ Đang hoạt động'}.`,
+          };
+        }
+      }
+
+      if (role === 'GUEST' || role === 'MEMBER') {
+        return {
+          text: `🎟️ **Bảng giá các gói hội viên:**\n` +
+            `• Gói 1 tháng: **449.000đ** (30 lượt / 30 ngày - 14.967đ/lượt 2h)\n` +
+            `• Gói 3 tháng: **1.149.000đ** (90 lượt / 90 ngày - 12.767đ/lượt 2h)\n` +
+            `• Gói 6 tháng: **1.999.000đ** (180 lượt / 180 ngày - 11.106đ/lượt 2h - Tiết kiệm nhất)\n` +
+            `👉 Quý khách có thể liên hệ nhân viên tại quầy hoặc hỏi chatbot để được hỗ trợ đăng ký.`,
+        };
+      }
+
+      if (role === 'STAFF' || role === 'MANAGER') {
+        return {
+          text: `👥 **Thông tin Hội viên Hệ thống:** Hiện có **${dashboard.stats.activeMembers} hội viên** đang hoạt động với các gói tháng.`,
+        };
+      }
     }
-    if (/bàn|trống|con ban|còn chỗ/.test(text)) {
+
+    // 2.5. Tra cứu LỊCH ĐẶT BÀN & TÌNH TRẠNG BÀN
+    if (/bàn|ban|trống|con ban|còn chỗ|lịch đặt|lich dat|sân|san|tình trạng bàn/.test(text)) {
       const available = dashboard.tables.filter((t) => t.status === 'available').length;
+      const busy = dashboard.tables.filter((t) => t.status === 'busy').length;
+      const reserved = dashboard.tables.filter((t) => t.status === 'reserved').length;
+
+      if (role === 'STAFF' || role === 'MANAGER') {
+        return {
+          text: `🏓 **Lịch đặt bàn & Tình trạng bàn hôm nay:**\n` +
+            `• Bàn trống sẵn sàng: **${available}/16 bàn**\n` +
+            `• Bàn đang chơi: **${busy}/16 bàn**\n` +
+            `• Bàn đã đặt trước: **${reserved}/16 bàn**\n` +
+            `• Tổng đơn đặt bàn hôm nay: **${dashboard.stats.todayBookings} lượt**\n` +
+            `Nhân viên/Quản lý có thể theo dõi sơ đồ sân thời gian thực tại tab "Bàn".`,
+        };
+      }
+
       return {
-        text: `🏓 Hiện tại CLB có ${available}/16 bàn đang trống. Hãy nhập yêu cầu đặt bàn (ví dụ: 'tối mai 7h cho 4 người chơi 2 tiếng') để AI hỗ trợ đặt ngay nhé!`,
+        text: `🏓 Hiện tại CLB có **${available}/16 bàn đang trống**. Quý khách có thể đặt bàn trực tiếp bằng cách gõ yêu cầu (ví dụ: *"tối mai 19h cho 4 người chơi 2 tiếng"*) để AI hỗ trợ điền form đặt bàn!`,
       };
     }
-    if (/lớp|dạy|giáo viên|giao vien/.test(text)) {
+
+    // 2.6. Tra cứu GIÁ THUÊ BÀN THEO GIỜ & GIỜ MỞ CỬA
+    if (/giá|gia|chi phí|tiền|bao nhiêu|bao nhieu|giá thuê bàn/.test(text)) {
       return {
-        text: `🎓 Lớp học diễn ra 2 tiếng tại khu dạy học (bàn 1-4) và phải kết thúc trước ${dashboard.config.classCutoffHour}:00. Mỗi lớp phân bổ 2 bàn và cần Quản lý duyệt trước khi lên sân.`,
+        text: `💰 **Bảng giá thuê bàn & Dịch vụ:**\n` +
+          `• Giá thuê bàn theo giờ (khách lẻ): **${dashboard.config.courtPrice.toLocaleString('vi-VN')}đ / người / giờ** (mặc định 2 giờ).\n` +
+          `• Giá thuê bàn phục vụ lớp học (Giáo viên): **250.000đ / lượt 2 giờ**.\n` +
+          `• Gói hội viên tháng: 1 tháng (449.000đ), 3 tháng (1.149.000đ), 6 tháng (1.999.000đ).`,
+      };
+    }
+
+    if (/giờ|mở cửa|mo cua|đóng cửa|dong cua|thời gian/.test(text)) {
+      return {
+        text: `⏰ **Giờ mở cửa CLB PingPongBros:**\n` +
+          `• Giờ hoạt động: **${String(dashboard.config.openingHour).padStart(2, '0')}:00 đến ${String(dashboard.config.closingHour).padStart(2, '0')}:00** hàng ngày.\n` +
+          `• Khu bàn dạy học (bàn 1-4) mở cho khách đặt tự do sau **${dashboard.config.classCutoffHour}:00**.\n` +
+          `• Quy tắc giữ bàn: Quá 15 phút so với giờ hẹn không check-in, bàn sẽ tự động giải phóng.`,
       };
     }
 
     return {
-      text: 'Chào bạn! Mình là Trợ lý AI-3 của PingPongBros. Bạn có thể gõ câu tự nhiên như "tối mai 7h cho 4 người chơi 2 tiếng" hoặc hỏi về giá chơi, gói tháng, tình trạng sân và lớp học.',
+      text: `Xin chào! Tôi là Trợ lý AI-3 của PingPongBros. Bạn có thể hỏi về giá thuê bàn, giờ mở cửa, các gói hội viên hoặc nhập câu tự nhiên (ví dụ: "tối mai 19h cho 4 người") để được hỗ trợ điền form đặt bàn.`,
     };
   };
 
@@ -256,14 +416,16 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     onNotify(`Đã mở Form Đặt Bàn với thông tin đề xuất: Ngày ${extracted.date} lúc ${extracted.time} (${extracted.duration} giờ, ${extracted.people} người). Vui lòng kiểm tra và xác nhận.`);
   };
 
-  // Câu hỏi thường gặp hiển thị theo từng giao diện vai trò của người dùng
+  // Câu hỏi gợi ý hiển thị chuẩn hóa theo từng vai trò tài khoản (Mục 1)
   const quickQuestions = user.role === 'TEACHER'
-    ? ['Đăng ký lớp học thế nào?', 'Giá 1 lượt dạy là bao nhiêu?', 'Quy định giờ dạy học?', 'Tối mai 17h cho lớp 2 bàn']
+    ? ['Giá lớp học bao nhiêu?', 'Lịch học của tôi?', 'Đặt bàn phục vụ lớp học', 'Bàn khu dạy học mở đến mấy giờ?']
     : user.role === 'MEMBER'
-      ? ['Gói tháng còn bao nhiêu lượt?', 'Gia hạn gói có cộng dồn không?', 'Tối mai 19h cho 4 người chơi 2 tiếng', 'Còn bàn trống không?']
-      : user.role === 'STAFF' || user.role === 'MANAGER'
-        ? ['Quy tắc giữ bàn 15 phút?', 'Hết 30 lượt xử lý thế nào?', 'Giờ cao điểm dự báo lúc nào?', 'Tối mai 19h cho 4 người']
-        : ['Giá chơi lẻ bao nhiêu?', 'Tối mai 7h cho 4 người chơi 2 tiếng', 'Gói tháng giá thế nào?', 'CLB mở cửa đến mấy giờ?'];
+      ? ['Thông tin hội viên của tôi?', 'Giá các gói hội viên?', 'Giờ mở cửa CLB?', 'Tối mai 19h cho 4 người']
+      : user.role === 'STAFF'
+        ? ['Lịch đặt bàn và tình trạng bàn?', 'Doanh thu ngày hiện tại?', 'Còn bàn trống không?', 'Quy tắc giữ bàn 15 phút?']
+        : user.role === 'MANAGER'
+          ? ['Doanh thu hôm nay, tuần này và tháng này?', 'Lịch đặt bàn và tình trạng bàn?', 'Thông tin lớp học hệ thống?', 'Thông tin hội viên hoạt động?']
+          : ['Giá thuê bàn theo giờ?', 'Giờ mở cửa CLB?', 'Giá các gói hội viên?', 'Tối mai 19h cho 2 người'];
 
   const askQuestion = (question: string) => {
     const id = Date.now();
