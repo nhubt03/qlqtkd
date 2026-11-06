@@ -19,6 +19,7 @@ interface ChatMessage {
   extracted?: ExtractedBooking;
   action?: { label: string; page: PageId };
   transferredToTeacher?: boolean;
+  transferredToStaff?: boolean;
 }
 
 interface ChatWidgetProps {
@@ -172,7 +173,7 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     return null;
   };
 
-  const answer = (raw: string): { text: string; extracted?: ExtractedBooking; transferredToTeacher?: boolean } => {
+  const answer = (raw: string): { text: string; extracted?: ExtractedBooking; transferredToTeacher?: boolean; transferredToStaff?: boolean } => {
     const text = raw.toLowerCase().trim();
     const role = user.role;
 
@@ -201,20 +202,20 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
       })
       .reduce((sum, p) => sum + p.amount, 0);
 
-    // 1. Thử phân tích ý định đặt bàn bằng NLP (nếu là câu yêu cầu đặt bàn cụ thể)
+    // 1. Thử phân tích ý định đặt bàn bằng NLP (Mục 2: Thiết lập ngưỡng độ tin cậy >= 80%)
     const bookingIntent = parseBookingIntent(raw);
     if (bookingIntent) {
-      const CONFIDENCE_THRESHOLD = 70;
+      const CONFIDENCE_THRESHOLD = 80;
       if (bookingIntent.confidence < CONFIDENCE_THRESHOLD) {
         return {
-          text: `⚠️ Độ tin cậy của thông tin bóc tách là **${bookingIntent.confidence}%** (dưới ngưỡng quy định 70%).\n\n` +
-            `Yêu cầu của bạn chưa đủ dữ liệu hoặc cần hỗ trợ chuyên sâu hơn. Trợ lý AI đang **chuyển cuộc hội thoại đến Giáo viên / Nhân viên câu lạc bộ** để tiếp tục xử lý và hỗ trợ bạn trực tiếp!`,
-          transferredToTeacher: true,
+          text: `⚠️ Độ tin cậy của thông tin bóc tách là **${bookingIntent.confidence}%** (dưới ngưỡng quy định 80%).\n\n` +
+            `Dữ liệu câu yêu cầu chưa đủ thông tin xác thực để tự động đề xuất. Theo quy định bảo đảm chất lượng, Trợ lý AI không tự suy đoán thông tin thiếu và đã chuyển câu hỏi đến Nhân viên để trực tiếp hỗ trợ bạn.`,
+          transferredToStaff: true,
         };
       }
 
       return {
-        text: `🤖 AI-3 đã bóc tách thông tin đặt bàn từ câu của bạn (Độ tin cậy: ${bookingIntent.confidence}%):\n` +
+        text: `🤖 AI-3 đã bóc tách thông tin đặt bàn từ câu của bạn (Độ tin cậy: **${bookingIntent.confidence}%** ≥ 80% - Đạt ngưỡng quy định):\n` +
           `• Khách hàng: ${bookingIntent.customerName}\n` +
           `• Ngày chơi: ${bookingIntent.date}\n` +
           `• Giờ bắt đầu: ${bookingIntent.time}\n` +
@@ -390,8 +391,18 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
       };
     }
 
+    // 2.7. Kiểm tra câu chào hỏi
+    if (/^(chào|hi|hello|alo|xin chào|hey|bạn là ai|ban la ai|giới thiệu|gioi thieu)/.test(text)) {
+      return {
+        text: `Xin chào ${user.name}! Tôi là Trợ lý AI-3 của PingPongBros. Tôi có thể hỗ trợ bạn tra cứu giá thuê bàn, giờ mở cửa, tình trạng bàn, thông tin gói hội viên hoặc hỗ trợ điền nhanh form đặt bàn. Bạn cần thông tin gì?`,
+      };
+    }
+
+    // Nếu không khớp dữ liệu xác thực nào trong hệ thống: Không tự suy đoán, chuyển câu hỏi đến Nhân viên (Mục 2)
     return {
-      text: `Xin chào! Tôi là Trợ lý AI-3 của PingPongBros. Bạn có thể hỏi về giá thuê bàn, giờ mở cửa, các gói hội viên hoặc nhập câu tự nhiên (ví dụ: "tối mai 19h cho 4 người") để được hỗ trợ điền form đặt bàn.`,
+      text: `⚠️ Độ tin cậy thông tin cho câu hỏi này là **35%** (dưới ngưỡng quy định 80%) và không có dữ liệu xác thực trong hệ thống PingPongBros.\n\n` +
+        `Theo quy định, Chatbot không được tự suy đoán hoặc cung cấp thông tin không có trong hệ thống. Câu hỏi của bạn đã được chuyển đến Nhân viên để trực tiếp hỗ trợ giải đáp.`,
+      transferredToStaff: true,
     };
   };
 
@@ -404,7 +415,14 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     setMessages((current) => [
       ...current,
       { id, role: 'user', text },
-      { id: id + 1, role: 'assistant', text: response.text, extracted: response.extracted, transferredToTeacher: response.transferredToTeacher },
+      {
+        id: id + 1,
+        role: 'assistant',
+        text: response.text,
+        extracted: response.extracted,
+        transferredToTeacher: response.transferredToTeacher,
+        transferredToStaff: response.transferredToStaff,
+      },
     ]);
     setDraft('');
   };
@@ -433,7 +451,14 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     setMessages((current) => [
       ...current,
       { id, role: 'user', text: question },
-      { id: id + 1, role: 'assistant', text: response.text, extracted: response.extracted, transferredToTeacher: response.transferredToTeacher },
+      {
+        id: id + 1,
+        role: 'assistant',
+        text: response.text,
+        extracted: response.extracted,
+        transferredToTeacher: response.transferredToTeacher,
+        transferredToStaff: response.transferredToStaff,
+      },
     ]);
   };
 
@@ -474,9 +499,9 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
                     </button>
                   </div>
                 )}
-                {message.transferredToTeacher && (
+                {(message.transferredToStaff || message.transferredToTeacher) && (
                   <div style={{ marginTop: 8, padding: '8px 12px', background: '#fef3c7', borderRadius: 6, border: '1px solid #f59e0b', fontSize: 12, color: '#92400e', lineHeight: 1.4 }}>
-                    <b>👨‍🏫 Đã chuyển cuộc hội thoại:</b> Yêu cầu của bạn đã được chuyển đến Giáo viên trực sân. Giáo viên hoặc Nhân viên sẽ liên hệ lại với bạn sớm nhất!
+                    <b>👨‍💼 Đã chuyển câu hỏi đến Nhân viên hỗ trợ:</b> Độ tin cậy dưới ngưỡng quy định 80% hoặc câu hỏi không có dữ liệu xác thực trong hệ thống. Nhân viên trực sân đã tiếp nhận thông tin và sẽ hỗ trợ giải đáp trực tiếp cho bạn!
                   </div>
                 )}
                 {message.action && (

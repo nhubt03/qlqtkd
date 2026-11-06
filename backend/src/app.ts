@@ -891,15 +891,21 @@ app.post('/api/ai/chat', (req, res) => {
   const today = new Date();
   let targetDate = new Date(today);
   const explicitDate = raw.match(/(?:ngày\s+)?(\d{1,2})(?:[\/\-](\d{1,2})(?:[\/\-](\d{4}))?|\s+tháng\s+(\d{1,2})(?:\s+năm\s+(\d{4}))?)/);
+  let hasDate = false;
   if (explicitDate) {
     const d = parseInt(explicitDate[1], 10);
     const m = parseInt(explicitDate[2] || explicitDate[4], 10);
     const y = explicitDate[3] || explicitDate[5] ? parseInt(explicitDate[3] || explicitDate[5], 10) : today.getFullYear();
     targetDate = new Date(y, m - 1, d);
-  } else if (raw.includes('mai')) {
+    hasDate = true;
+  } else if (raw.includes('mai') || raw.includes('ngày mai')) {
     targetDate.setDate(today.getDate() + 1);
-  } else if (raw.includes('mốt') || raw.includes('mot')) {
+    hasDate = true;
+  } else if (raw.includes('mốt') || raw.includes('mot') || raw.includes('ngày kia')) {
     targetDate.setDate(today.getDate() + 2);
+    hasDate = true;
+  } else if (raw.includes('hôm nay') || raw.includes('nay') || raw.includes('tối nay') || raw.includes('chiều nay') || raw.includes('sáng nay')) {
+    hasDate = true;
   }
   const dateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
 
@@ -939,22 +945,22 @@ app.post('/api/ai/chat', (req, res) => {
     hasDuration = true;
   }
 
-  // 5. Ngưỡng tin cậy (Confidence threshold)
+  // 5. Ngưỡng tin cậy (Confidence threshold >= 80% theo Mục 2)
   let score = 0;
   if (pMatch || raw.includes('đánh đôi') || raw.includes('đánh đơn')) score += 25;
-  if (explicitDate || raw.includes('mai') || raw.includes('mốt')) score += 25;
+  if (hasDate) score += 25;
   if (hasTime) score += 25;
   if (hasDuration) score += 25;
 
   const confidence = score;
-  const CONFIDENCE_THRESHOLD = 70;
+  const CONFIDENCE_THRESHOLD = 80;
 
   if (confidence < CONFIDENCE_THRESHOLD) {
     return res.json({
       ok: true,
       confidence,
-      transferredToTeacher: true,
-      message: `Độ tin cậy đạt ${confidence}% (thấp hơn ngưỡng quy định ${CONFIDENCE_THRESHOLD}%). Hệ thống đã chuyển yêu cầu đến Giáo viên / Nhân viên để tiếp tục hỗ trợ trực tiếp.`,
+      transferredToStaff: true,
+      message: `Độ tin cậy đạt ${confidence}% (thấp hơn ngưỡng quy định ${CONFIDENCE_THRESHOLD}%). Không có đủ dữ liệu xác thực, hệ thống không tự suy đoán và đã chuyển câu hỏi đến Nhân viên để hỗ trợ giải đáp trực tiếp.`,
     });
   }
 
