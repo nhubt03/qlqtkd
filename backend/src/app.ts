@@ -877,8 +877,44 @@ app.get('/api/ai/du-bao', (req, res) => {
 app.post('/api/ai/dat-ban', handleBookingCreation);
 
 app.post('/api/ai/chat', (req, res) => {
-  const { message } = req.body ?? {};
+  const { message, role, userRole } = req.body ?? {};
   const raw = String(message || '').toLowerCase();
+  // BẢO MẬT VÀ KIỂM SOÁT QUYỀN TRUY CẬP (MỤC 4):
+  // Chatbot phải xác định vai trò tài khoản trước khi truy xuất và trả lời thông tin.
+  // Không được cung cấp dữ liệu vượt quá quyền hạn của từng loại tài khoản.
+  const activeRole = (role || userRole || 'GUEST') as 'GUEST' | 'MEMBER' | 'TEACHER' | 'STAFF' | 'MANAGER';
+
+  // 0. Kiểm tra quyền truy xuất dữ liệu Doanh thu & Tài chính nội bộ
+  if (/doanh thu|doanh so|doanh_thu|thu nhap|tiền thu|doanh số|thu nhập|doanhthu/.test(raw)) {
+    if (activeRole === 'GUEST' || activeRole === 'MEMBER') {
+      return res.status(403).json({
+        ok: false,
+        role: activeRole,
+        denied: true,
+        message: 'Quyền truy cập bị từ chối: Tài khoản Khách hàng không được phép truy xuất dữ liệu doanh thu của câu lạc bộ. Khách chỉ được hỏi về đặt bàn, giờ mở cửa, giá thuê bàn theo giờ, giá các gói hội viên và thông tin hội viên.',
+      });
+    }
+
+    if (activeRole === 'TEACHER') {
+      return res.status(403).json({
+        ok: false,
+        role: activeRole,
+        denied: true,
+        message: 'Quyền truy cập bị từ chối: Tài khoản Giáo viên không được phép xem doanh thu của câu lạc bộ. Giáo viên chỉ được hỏi về giá lớp học, lịch học và đặt bàn phục vụ lớp học.',
+      });
+    }
+
+    if (activeRole === 'STAFF') {
+      if (/tuần|tuan|tháng|thang|quý|quy|năm|nam|toàn thời gian|tổng/.test(raw)) {
+        return res.status(403).json({
+          ok: false,
+          role: activeRole,
+          denied: true,
+          message: 'Quyền truy cập bị từ chối: Theo quy định bảo mật, tài khoản Nhân viên chỉ được xem doanh thu ngày hiện tại, không được truy xuất doanh thu theo tuần hoặc tháng.',
+        });
+      }
+    }
+  }
 
   // 1. Số người
   let people = 2;

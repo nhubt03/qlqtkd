@@ -237,21 +237,22 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
       };
     }
 
-    // 2. PHÂN QUYỀN CHATBOT THEO TÀI KHOẢN (MỤC 1)
+    // 2. PHÂN QUYỀN CHATBOT THEO TÀI KHOẢN (MỤC 1 & MỤC 4: BẢO MẬT & KIỂM SOÁT QUYỀN TRUY CẬP)
+    // Chatbot luôn xác định vai trò tài khoản (role) trước khi truy xuất dữ liệu
 
     // 2.1. Tra cứu DOANH THU & TÀI CHÍNH NỘI BỘ
     if (/doanh thu|doanh so|doanh_thu|thu nhap|tiền thu|doanh số|thu nhập|doanhthu|doanh thu ngày|doanh thu tuần|doanh thu tháng/.test(text)) {
       // Khách vãng lai & Khách tháng: TUYỆT ĐỐI KHÔNG ĐƯỢC XEM
       if (role === 'GUEST' || role === 'MEMBER') {
         return {
-          text: '⛔ **Quyền truy cập bị từ chối:** Khách hàng không có quyền xem thông tin doanh thu của câu lạc bộ. Khách hàng chỉ được hỏi về đặt bàn, giờ mở cửa, giá thuê bàn theo giờ, giá các gói hội viên và thông tin hội viên.',
+          text: '⛔ **[Bảo mật] Quyền truy cập bị từ chối:** Tài khoản vai trò Khách hàng không có quyền xem thông tin doanh thu của câu lạc bộ. Bạn chỉ được hỏi về đặt bàn, giờ mở cửa, giá thuê bàn theo giờ, giá các gói hội viên và thông tin hội viên.',
         };
       }
 
       // Giáo viên: TUYỆT ĐỐI KHÔNG ĐƯỢC XEM DOANH THU CLB
       if (role === 'TEACHER') {
         return {
-          text: '⛔ **Quyền truy cập bị từ chối:** Giáo viên không có quyền xem thông tin doanh thu của câu lạc bộ. Giáo viên chỉ được hỏi về giá lớp học, lịch học và đặt bàn phục vụ lớp học.',
+          text: '⛔ **[Bảo mật] Quyền truy cập bị từ chối:** Tài khoản vai trò Giáo viên không có quyền xem doanh thu của câu lạc bộ. Bạn chỉ được hỏi về giá lớp học, lịch học và đặt bàn phục vụ lớp học.',
         };
       }
 
@@ -259,7 +260,7 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
       if (role === 'STAFF') {
         if (/tuần|tuan|tháng|thang|quý|quy|năm|nam|toàn thời gian|tổng/.test(text)) {
           return {
-            text: '⛔ **Giới hạn phân quyền Nhân viên:** Theo quy định bảo mật, tài khoản Nhân viên **chỉ được xem doanh thu của ngày hiện tại**. Không được xem doanh thu theo tuần hoặc tháng. Báo cáo tuần/tháng dành riêng cho Quản lý.',
+            text: '⛔ **[Bảo mật] Giới hạn quyền truy cập Nhân viên:** Theo quy chế bảo mật, tài khoản Nhân viên **chỉ được xem doanh thu của ngày hiện tại**. Tuyệt đối không được truy xuất doanh thu theo tuần hoặc tháng.',
           };
         }
         // Doanh thu ngày hiện tại
@@ -267,7 +268,7 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
           text: `📊 **Báo cáo Doanh thu Ngày hiện tại (${new Date().toLocaleDateString('vi-VN')}):**\n` +
             `• Số tiền đã thu hôm nay: **${todayRev.toLocaleString('vi-VN')}đ**\n` +
             `• Số giao dịch hôm nay: **${todayTxCount} giao dịch**\n\n` +
-            `*(Lưu ý bảo mật: Tài khoản Nhân viên không được quyền xem doanh thu theo tuần hoặc tháng).*`,
+            `*(Lưu ý bảo mật: Tài khoản Nhân viên không được cấp quyền xem doanh thu theo tuần hoặc tháng).*`,
         };
       }
 
@@ -486,8 +487,11 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
               Đóng
             </button>
           </div>
-          <div className="bot-st">
-            <span>Xin chào, {user.name} ({user.role === 'MEMBER' ? 'Khách tháng' : user.role === 'TEACHER' ? 'Giáo viên' : user.role === 'MANAGER' ? 'Quản lý' : user.role === 'STAFF' ? 'Nhân viên' : 'Khách vãng lai'})</span>
+          <div className="bot-st" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Xin chào, {user.name}</span>
+            <span className="tag" style={{ background: '#0284c7', color: '#fff', fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 500 }}>
+              🔒 {user.role === 'MANAGER' ? 'Quản lý (Toàn quyền)' : user.role === 'STAFF' ? 'Nhân viên' : user.role === 'TEACHER' ? 'Giáo viên' : user.role === 'MEMBER' ? 'Khách tháng' : 'Khách vãng lai'}
+            </span>
           </div>
           <div className="bot-m" ref={thread} aria-live="polite">
             {!messages.length && (
