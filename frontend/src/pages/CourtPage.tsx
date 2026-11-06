@@ -606,6 +606,20 @@ function BookingForm({ dashboard, user, onNotify, onRefresh, onSuccessBooking }:
   const [checkInImmediately, setCheckInImmediately] = useState(false);
   const isStaff = user.role === 'STAFF' || user.role === 'MANAGER';
 
+  // Lắng nghe đề xuất từ Chatbot AI-3 để tự động điền form cho người dùng tự kiểm tra & xác nhận
+  useEffect(() => {
+    const handler = (e: any) => {
+      const detail = e.detail;
+      if (!detail) return;
+      if (detail.date) setBookingDate(detail.date);
+      if (detail.time) setStartTime(detail.time);
+      if (detail.duration) setDuration(detail.duration);
+      if (detail.people) setPeople(detail.people);
+    };
+    window.addEventListener('ai3-fill-booking', handler);
+    return () => window.removeEventListener('ai3-fill-booking', handler);
+  }, []);
+
   // Kiểm tra thông tin gói của khách tháng
   const memberInfo = dashboard.members.find((m) => m.id === user.memberId || m.phone === user.phone);
   const leftTurns = memberInfo ? Math.max(0, memberInfo.totalTurns - memberInfo.usedTurns) : 0;

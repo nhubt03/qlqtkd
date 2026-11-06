@@ -888,21 +888,47 @@ app.post('/api/ai/chat', (req, res) => {
 
   // 4. Thời lượng
   let duration = 2;
-  const durMatch = raw.match(/(?:trong|chơi|choi)?\s*(\d+(\.\d+)?)\s*(?:tiếng|tieng|tiếng đồng hồ)\b/)
-    || raw.match(/(?<!từ\s|tu\s|lúc\s|luc\s|vào\s|vao\s)(\d+(\.\d+)?)\s*(?:giờ|gio)(?!\s*(?:tối|toi|chiều|chieu|sáng|sang|am|pm))\b/);
-  if (durMatch) duration = parseFloat(durMatch[1]);
+  let hasDuration = false;
+  const durMatch = raw.match(/(\d+(?:\.\d+)?)\s*(?:tiếng|tieng|tiếng đồng hồ)(?!\w)/)
+    || raw.match(/(?<!từ\s|tu\s|lúc\s|luc\s|vào\s|vao\s)(\d+(?:\.\d+)?)\s*(?:giờ|gio)(?!\s*(?:tối|toi|chiều|chieu|sáng|sang|am|pm|\d))(?!\w)/);
+  if (durMatch) {
+    duration = parseFloat(durMatch[1]);
+    hasDuration = true;
+  }
+
+  // 5. Ngưỡng tin cậy (Confidence threshold)
+  let score = 0;
+  if (pMatch || raw.includes('đánh đôi') || raw.includes('đánh đơn')) score += 25;
+  if (explicitDate || raw.includes('mai') || raw.includes('mốt')) score += 25;
+  if (prefixTime || suffixTime) score += 25;
+  if (hasDuration) score += 25;
+
+  const confidence = score;
+  const CONFIDENCE_THRESHOLD = 70;
+
+  if (confidence < CONFIDENCE_THRESHOLD) {
+    return res.json({
+      ok: true,
+      confidence,
+      transferredToTeacher: true,
+      message: `Độ tin cậy đạt ${confidence}% (thấp hơn ngưỡng quy định ${CONFIDENCE_THRESHOLD}%). Hệ thống đã chuyển yêu cầu đến Giáo viên / Nhân viên để tiếp tục hỗ trợ trực tiếp.`,
+    });
+  }
 
   const extracted = {
     date: dateStr,
     people,
     duration,
     time,
-    confidence: 95,
+    confidence,
   };
 
   res.json({
     ok: true,
-    reply: `Trợ lý AI đã nhận diện ý định đặt bàn: ngày ${dateStr} lúc ${time}, ${people} người chơi trong ${duration} giờ.`,
+    confidence,
+    intent: 'BOOKING_PROPOSAL',
+    message: `Đề xuất thông tin đặt bàn (Độ tin cậy ${confidence}%). Người dùng vui lòng kiểm tra và xác nhận qua Form Đặt Bàn.`,
+    reply: `Trợ lý AI đã nhận diện ý định đặt bàn: ngày ${dateStr} lúc ${time}, ${people} người chơi trong ${duration} giờ. Nhấn mở Form Đặt Bàn để kiểm tra và xác nhận.`,
     extracted,
   });
 });

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { DashboardResponse, User } from '../../types';
 import type { PageId } from '../layout/Shell';
-import { createBooking } from '../../services/api';
 import { BookingSuccessModal, type BookingSuccessInfo } from '../common/BookingSuccessModal';
 
 interface ExtractedBooking {
@@ -19,6 +18,7 @@ interface ChatMessage {
   text: string;
   extracted?: ExtractedBooking;
   action?: { label: string; page: PageId };
+  transferredToTeacher?: boolean;
 }
 
 interface ChatWidgetProps {
@@ -141,8 +141,8 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     // 4. Nhận dạng thời lượng (duration: 2 tiếng, 2 giờ, 1.5h, 3 tiếng, trong 2 giờ)
     let duration = 2;
     let hasDuration = false;
-    const durMatch = raw.match(/(?:trong|chơi|choi)?\s*(\d+(\.\d+)?)\s*(?:tiếng|tieng|tiếng đồng hồ)\b/)
-      || raw.match(/(?<!từ\s|tu\s|lúc\s|luc\s|vào\s|vao\s)(\d+(\.\d+)?)\s*(?:giờ|gio)(?!\s*(?:tối|toi|chiều|chieu|sáng|sang|am|pm))\b/);
+    const durMatch = raw.match(/(\d+(?:\.\d+)?)\s*(?:tiếng|tieng|tiếng đồng hồ)(?!\w)/)
+      || raw.match(/(?<!từ\s|tu\s|lúc\s|luc\s|vào\s|vao\s)(\d+(?:\.\d+)?)\s*(?:giờ|gio)(?!\s*(?:tối|toi|chiều|chieu|sáng|sang|am|pm|\d))(?!\w)/);
 
     if (durMatch) {
       duration = parseFloat(durMatch[1]);
@@ -153,38 +153,48 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     let score = 0;
     if (hasPeople) score += 25;
     if (hasDate) score += 25;
-    if (hasTime) score += 30;
-    if (hasDuration) score += 15;
+    if (hasTime) score += 25;
+    if (hasDuration) score += 25;
 
-    // Nếu chứa từ khóa đặt bàn hoặc có ít nhất 2 thực thể
+    // Nếu chứa từ khóa đặt bàn hoặc có ít nhất 1 thực thể
     const isBookingQuestion = /đặt|dat|book|chơi|choi|bàn|ban|giữ|giu/.test(raw);
-    if ((isBookingQuestion && score >= 25) || score >= 50) {
+    if (isBookingQuestion || score >= 25) {
       return {
         customerName: user.name,
         people,
         date: dateStr,
         time: timeStr,
         duration: duration || 2,
-        confidence: Math.min(98, Math.max(65, score + 15)),
+        confidence: score,
       };
     }
 
     return null;
   };
 
-    const answer = (raw: string): { text: string; extracted?: ExtractedBooking } => {
+  const answer = (raw: string): { text: string; extracted?: ExtractedBooking; transferredToTeacher?: boolean } => {
     const text = raw.toLowerCase().trim();
 
     // 1. Thử phân tích ý định đặt bàn bằng NLP
     const bookingIntent = parseBookingIntent(raw);
     if (bookingIntent) {
+      const CONFIDENCE_THRESHOLD = 70;
+      if (bookingIntent.confidence < CONFIDENCE_THRESHOLD) {
+        return {
+          text: `⚠️ Độ tin cậy của thông tin bóc tách là **${bookingIntent.confidence}%** (dưới ngưỡng quy định 70%).\n\n` +
+            `Yêu cầu của bạn chưa đủ dữ liệu hoặc cần hỗ trợ chuyên sâu hơn. Trợ lý AI đang **chuyển cuộc hội thoại đến Giáo viên / Nhân viên câu lạc bộ** để tiếp tục xử lý và hỗ trợ bạn trực tiếp!`,
+          transferredToTeacher: true,
+        };
+      }
+
       return {
         text: `🤖 AI-3 đã bóc tách thông tin đặt bàn từ câu của bạn (Độ tin cậy: ${bookingIntent.confidence}%):\n` +
           `• Khách hàng: ${bookingIntent.customerName}\n` +
           `• Ngày chơi: ${bookingIntent.date}\n` +
           `• Giờ bắt đầu: ${bookingIntent.time}\n` +
           `• Thời lượng: ${bookingIntent.duration} giờ\n` +
-          `• Số người: ${bookingIntent.people} người (Tối đa 4 người/bàn)`,
+          `• Số người: ${bookingIntent.people} người (Tối đa 4 người/bàn)\n\n` +
+          `👉 *Lưu ý: Chatbot chỉ có vai trò tư vấn và hướng dẫn. Bạn có toàn quyền kiểm tra, chỉnh sửa thông tin và xác nhận đặt bàn trên Form Đặt Bàn.*`,
         extracted: bookingIntent,
       };
     }
@@ -234,58 +244,16 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     setMessages((current) => [
       ...current,
       { id, role: 'user', text },
-      { id: id + 1, role: 'assistant', text: response.text, extracted: response.extracted },
+      { id: id + 1, role: 'assistant', text: response.text, extracted: response.extracted, transferredToTeacher: response.transferredToTeacher },
     ]);
     setDraft('');
   };
 
-  const handleConfirmBotBooking = async (extracted: ExtractedBooking) => {
-    try {
-      const availableTable = dashboard.tables.find((t) => t.status === 'available');
-      if (!availableTable) {
-        onNotify('Rất tiếc hiện tại đã hết bàn trống! Bạn có thể chọn giờ khác hoặc vào hàng chờ.');
-        return;
-      }
-      const startIso = new Date(`${extracted.date}T${extracted.time}:00`).toISOString();
-      const created = await createBooking({
-        tableId: availableTable.tableNumber,
-        customerName: extracted.customerName,
-        phone: user.phone,
-        email: user.email,
-        type: user.role === 'MEMBER' ? 'MEMBER' : 'WALK_IN',
-        startTime: startIso,
-        duration: extracted.duration,
-        people: extracted.people,
-        amount: user.role === 'MEMBER' ? 0 : extracted.people * extracted.duration * dashboard.config.courtPrice,
-        memberId: user.memberId ?? null,
-      });
-
-      const newBookingId = created?.id || dashboard.bookings.length + 1;
-      setBotSuccessModal({
-        bookingId: newBookingId,
-        tableNumber: availableTable.tableNumber,
-        customerName: extracted.customerName,
-        phone: user.phone,
-        date: extracted.date,
-        startTime: extracted.time,
-        duration: extracted.duration,
-        people: extracted.people,
-        amount: user.role === 'MEMBER' ? 0 : extracted.people * extracted.duration * dashboard.config.courtPrice,
-        isMember: user.role === 'MEMBER',
-      });
-
-      onNotify(`AI-3 đã đặt bàn thành công: Bàn ${availableTable.tableNumber} · ${extracted.date} ${extracted.time}!`);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          role: 'assistant',
-          text: `✅ Đặt bàn thành công! Hệ thống đã phân bổ Bàn ${availableTable.tableNumber} cho bạn vào lúc ${extracted.time} (${extracted.date}) với mã check-in PB-${String(newBookingId).padStart(4, '0')}. Vui lòng đến trước giờ chơi và đưa mã cho nhân viên quầy nhé!`,
-        },
-      ]);
-    } catch {
-      onNotify('Lỗi khi AI đặt bàn.');
-    }
+  const handleOpenBookingForm = (extracted: ExtractedBooking) => {
+    setOpen(false);
+    onNavigate('san');
+    window.dispatchEvent(new CustomEvent('ai3-fill-booking', { detail: extracted }));
+    onNotify(`Đã mở Form Đặt Bàn với thông tin đề xuất: Ngày ${extracted.date} lúc ${extracted.time} (${extracted.duration} giờ, ${extracted.people} người). Vui lòng kiểm tra và xác nhận.`);
   };
 
   // Câu hỏi thường gặp hiển thị theo từng giao diện vai trò của người dùng
@@ -303,7 +271,7 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     setMessages((current) => [
       ...current,
       { id, role: 'user', text: question },
-      { id: id + 1, role: 'assistant', text: response.text, extracted: response.extracted },
+      { id: id + 1, role: 'assistant', text: response.text, extracted: response.extracted, transferredToTeacher: response.transferredToTeacher },
     ]);
   };
 
@@ -333,15 +301,20 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
               <div key={message.id} className={`msg ${message.role === 'assistant' ? 'b' : 'u'}`}>
                 <div style={{ whiteSpace: 'pre-line' }}>{message.text}</div>
                 {message.extracted && (
-                  <div style={{ marginTop: 8, padding: '8px 10px', background: '#f0f4fc', borderRadius: 6, border: '1px solid #1d4ba8' }}>
+                  <div style={{ marginTop: 8, padding: '10px', background: '#eff6ff', borderRadius: 8, border: '1.5px solid #3b82f6' }}>
                     <button
-                      className="btn sm red"
+                      className="btn sm"
                       type="button"
-                      style={{ width: '100%', fontSize: 13, fontWeight: 'bold' }}
-                      onClick={() => handleConfirmBotBooking(message.extracted!)}
+                      style={{ width: '100%', fontSize: 13, fontWeight: 'bold', background: '#1d4ed8', color: '#fff', padding: '8px 12px' }}
+                      onClick={() => handleOpenBookingForm(message.extracted!)}
                     >
-                      Xác nhận đặt bàn ngay
+                      📝 Mở Form Đặt Bàn Để Kiểm Tra & Xác Nhận
                     </button>
+                  </div>
+                )}
+                {message.transferredToTeacher && (
+                  <div style={{ marginTop: 8, padding: '8px 12px', background: '#fef3c7', borderRadius: 6, border: '1px solid #f59e0b', fontSize: 12, color: '#92400e', lineHeight: 1.4 }}>
+                    <b>👨‍🏫 Đã chuyển cuộc hội thoại:</b> Yêu cầu của bạn đã được chuyển đến Giáo viên trực sân. Giáo viên hoặc Nhân viên sẽ liên hệ lại với bạn sớm nhất!
                   </div>
                 )}
                 {message.action && (
