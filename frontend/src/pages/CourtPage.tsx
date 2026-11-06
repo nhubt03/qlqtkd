@@ -910,7 +910,7 @@ function BookingForm({ dashboard, user, onNotify, onRefresh, onSuccessBooking }:
           )}
           <div className="full">
             <button className="btn red" style={{ width: '100%' }} type="submit" disabled={submitting}>
-              {submitting ? 'Đang xử lý...' : checkInImmediately ? 'Đặt bàn & Check-in ngay' : 'Đặt bàn'}
+              {submitting ? 'Đang xử lý...' : checkInImmediately ? 'Xác nhận đặt bàn & Check-in ngay' : 'Xác nhận đặt bàn'}
             </button>
           </div>
         </div>

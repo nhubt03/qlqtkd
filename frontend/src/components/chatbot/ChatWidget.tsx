@@ -221,8 +221,19 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
           `• Giờ bắt đầu: ${bookingIntent.time}\n` +
           `• Thời lượng: ${bookingIntent.duration} giờ\n` +
           `• Số người: ${bookingIntent.people} người (Tối đa 4 người/bàn)\n\n` +
-          `👉 *Lưu ý: Chatbot chỉ có vai trò tư vấn và hướng dẫn. Bạn có toàn quyền kiểm tra, chỉnh sửa thông tin và xác nhận đặt bàn trên Form Đặt Bàn.*`,
+          `🛡️ **Giới hạn quyền Chatbot (Mục 3):** Chatbot chỉ có chức năng tư vấn, hướng dẫn và hỗ trợ điền biểu mẫu. Chatbot không được tự quyết định hoặc xác nhận giao dịch thay con người. Bạn vui lòng nhấn nút bên dưới để mở Form kiểm tra và tự nhấn **"Xác nhận đặt bàn"**.`,
         extracted: bookingIntent,
+      };
+    }
+
+    // 2. GIỚI HẠN QUYỀN THỰC HIỆN CỦA CHATBOT (MỤC 3)
+    // Chặn yêu cầu chatbot tự động xác nhận, tự thanh toán hoặc thao tác thay người dùng
+    if (/xác nhận luôn|xac nhan luon|chốt luôn|chot luon|đặt luôn giùm|dat luon gium|thanh toán luôn|thanh toan luon|tự động đặt|tu dong dat|thao tác thay|chốt bàn/.test(text)) {
+      return {
+        text: `⛔ **Giới hạn quyền thực hiện của Chatbot:**\n` +
+          `• Chatbot chỉ có chức năng tư vấn, hướng dẫn, cung cấp thông tin và hỗ trợ điền biểu mẫu.\n` +
+          `• Chatbot **không được tự đưa ra quyết định, xác nhận giao dịch hoặc thực hiện thao tác thay con người**.\n` +
+          `👉 Bạn vui lòng mở Form Đặt Bàn, kiểm tra thông tin và tự nhấn nút **"Xác nhận đặt bàn"** trên màn hình.`,
       };
     }
 
@@ -431,7 +442,7 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     setOpen(false);
     onNavigate('san');
     window.dispatchEvent(new CustomEvent('ai3-fill-booking', { detail: extracted }));
-    onNotify(`Đã mở Form Đặt Bàn với thông tin đề xuất: Ngày ${extracted.date} lúc ${extracted.time} (${extracted.duration} giờ, ${extracted.people} người). Vui lòng kiểm tra và xác nhận.`);
+    onNotify(`Đã hỗ trợ điền thông tin vào Form Đặt Bàn. Bạn vui lòng kiểm tra lại thông tin và tự nhấn nút "Xác nhận đặt bàn".`);
   };
 
   // Câu hỏi gợi ý hiển thị chuẩn hóa theo từng vai trò tài khoản (Mục 1)
@@ -489,13 +500,16 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
                 <div style={{ whiteSpace: 'pre-line' }}>{message.text}</div>
                 {message.extracted && (
                   <div style={{ marginTop: 8, padding: '10px', background: '#eff6ff', borderRadius: 8, border: '1.5px solid #3b82f6' }}>
+                    <div style={{ fontSize: 12, color: '#1e40af', marginBottom: 6, fontWeight: 500 }}>
+                      📋 <b>Hỗ trợ điền trước biểu mẫu:</b> AI đã chuẩn bị sẵn thông tin. Bạn cần tự kiểm tra và nhấn nút Xác nhận trên form.
+                    </div>
                     <button
                       className="btn sm"
                       type="button"
                       style={{ width: '100%', fontSize: 13, fontWeight: 'bold', background: '#1d4ed8', color: '#fff', padding: '8px 12px' }}
                       onClick={() => handleOpenBookingForm(message.extracted!)}
                     >
-                      📝 Mở Form Đặt Bàn Để Kiểm Tra & Xác Nhận
+                      📝 Mở Form Đã Điền Sẵn (Bạn Tự Nhấn "Xác Nhận Đặt Bàn")
                     </button>
                   </div>
                 )}
