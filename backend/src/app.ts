@@ -505,18 +505,22 @@ const handleClassApprove = (req: express.Request, res: express.Response) => {
   }
 
   session.status = 'approved';
+  persistStore();
   res.json({ ok: true, message: `Đã duyệt lớp học thành công cho ${session.teacherName}.`, session });
 };
 
 app.post('/api/classes/:id/approve', handleClassApprove);
 app.post('/api/lop-hoc/:id/duyet', handleClassApprove);
 
-app.post('/api/classes/:id/reject', (req, res) => {
+app.post(['/api/classes/:id/reject', '/api/lop-hoc/:id/tu-choi'], (req, res) => {
   const id = Number(req.params.id);
   const session = dashboardData.classes.find((c) => c.id === id);
   if (!session) return res.status(404).json({ message: 'Không tìm thấy lớp học.' });
+  const reason = String(req.body?.reason || req.body?.lyDo || 'Lịch sân không phù hợp').trim();
   session.status = 'rejected';
-  res.json({ ok: true, message: `Đã từ chối lớp học của ${session.teacherName}.`, session });
+  session.rejectReason = reason;
+  persistStore();
+  res.json({ ok: true, message: `Đã từ chối lớp học của ${session.teacherName}. Lý do: ${reason}`, session });
 });
 
 // ==========================================

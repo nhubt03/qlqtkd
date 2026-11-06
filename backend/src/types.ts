@@ -55,6 +55,9 @@ export interface ClassSession {
   endHour: number;
   tables: number[];
   status: 'approved' | 'pending' | 'rejected';
+  rejectReason?: string;
+  checkedInAt?: string | null;
+  checkedOutAt?: string | null;
 }
 
 export interface Payment {

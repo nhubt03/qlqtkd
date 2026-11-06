@@ -69,8 +69,8 @@ export async function approveClass(classId: number): Promise<void> {
   await api.post(`/classes/${classId}/approve`);
 }
 
-export async function rejectClass(classId: number): Promise<void> {
-  await api.post(`/classes/${classId}/reject`);
+export async function rejectClass(classId: number, reason?: string): Promise<void> {
+  await api.post(`/classes/${classId}/reject`, { reason });
 }
 
 export async function renewMember(memberId: number, packageId: string): Promise<any> {

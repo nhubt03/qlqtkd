@@ -6,7 +6,7 @@ export type PageId = 'san' | 'goi' | 'hv' | 'lop' | 'khach' | 'doanh' | 'cauhinh
 export const menus: Record<Role, [PageId, string][]> = {
   GUEST: [['san', 'Sân'], ['goi', 'Gói tháng']],
   MEMBER: [['san', 'Sân'], ['hv', 'Góc Hội viên']],
-  TEACHER: [['san', 'Sân']],
+  TEACHER: [['san', 'Sân'], ['lop', 'Lớp dạy của tôi']],
   STAFF: [['san', 'Sân'], ['khach', 'Khách tháng'], ['doanh', 'Thống kê']],
   MANAGER: [['san', 'Sân'], ['lop', 'Lớp học'], ['khach', 'Khách tháng'], ['doanh', 'Doanh thu'], ['cauhinh', 'Cấu hình']],
 };

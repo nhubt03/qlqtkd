@@ -22,7 +22,7 @@ interface ManagementPageProps {
 export function ManagementPage({ page, dashboard, user, onNotify, onOpenModal }: ManagementPageProps) {
   if (page === 'goi') return <PackagesPage config={dashboard.config} />;
   if (page === 'hv') return <MemberHome member={dashboard.members.find((member) => member.id === user.memberId)} config={dashboard.config} />;
-  if (page === 'lop') return <ClassesPage dashboard={dashboard} onNotify={onNotify} />;
+  if (page === 'lop') return <ClassesPage dashboard={dashboard} user={user} onNotify={onNotify} />;
   if (page === 'khach') return <MembersPage members={dashboard.members} user={user} onNotify={onNotify} />;
   if (page === 'doanh') return <StatisticsPage dashboard={dashboard} canSeeForecast={user.role === 'MANAGER'} onNotify={onNotify} />;
   return <SettingsPage dashboard={dashboard} user={user} onNotify={onNotify} />;
@@ -74,8 +74,18 @@ function MemberHome({ member, config }: { member?: Member; config: DashboardResp
   );
 }
 
-function ClassesPage({ dashboard, onNotify }: { dashboard: DashboardResponse; onNotify: (message: string) => void }) {
+function ClassesPage({ dashboard, user, onNotify }: { dashboard: DashboardResponse; user: User; onNotify: (message: string) => void }) {
   const [classesList, setClassesList] = useState(dashboard.classes);
+  const isTeacher = user.role === 'TEACHER';
+  
+  const teacherClasses = isTeacher
+    ? classesList.filter((c) => c.teacherName === user.name || (user.id && (c as any).teacherId === user.id) || !c.teacherName)
+    : classesList;
+
+  const approvedCount = teacherClasses.filter((c) => c.status === 'approved').length;
+  const pendingCount = teacherClasses.filter((c) => c.status === 'pending').length;
+  const rejectedCount = teacherClasses.filter((c) => c.status === 'rejected').length;
+
   const teacherStats = useMemo(() => {
     const stats: Record<string, { teacherName: string; approvedSessions: number; totalPay: number }> = {};
     const pricePerSession = dashboard.config.teacherPrice || 250000;
@@ -93,7 +103,9 @@ function ClassesPage({ dashboard, onNotify }: { dashboard: DashboardResponse; on
     return Object.values(stats);
   }, [classesList, dashboard.config.teacherPrice]);
 
-  const rows = [...classesList].sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || a.date.localeCompare(b.date) || a.startHour - b.startHour);
+  const rows = [...teacherClasses].sort(
+    (a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || a.date.localeCompare(b.date) || a.startHour - b.startHour
+  );
 
   const handleApprove = async (id: number) => {
     try {
@@ -120,48 +132,103 @@ function ClassesPage({ dashboard, onNotify }: { dashboard: DashboardResponse; on
     <>
       <div className="pg-h">
         <div>
-          <h2>Lớp học</h2>
-          <p>Duyệt hoặc từ chối lớp do giáo viên đăng ký. Kiểm tra xung đột bàn và giờ; lớp học phải kết thúc trước {dashboard.config.classCutoffHour}:00.</p>
+          <h2>{isTeacher ? 'Lớp dạy của tôi' : 'Lớp học'}</h2>
+          <p>
+            {isTeacher
+              ? 'Theo dõi trạng thái các yêu cầu đăng ký lớp học (Chờ duyệt, Đã duyệt, Từ chối kèm lý do) và thông báo từ Quản lý.'
+              : `Duyệt hoặc từ chối lớp do giáo viên đăng ký. Kiểm tra xung đột bàn và giờ; lớp học phải kết thúc trước ${dashboard.config.classCutoffHour}:00.`}
+          </p>
         </div>
       </div>
+
+      {isTeacher && (
+        <div style={{ marginBottom: 16 }}>
+          {approvedCount > 0 && (
+            <div className="alert ok" style={{ marginBottom: 8 }}>
+              <span>🔔 <b>Thông báo lớp học:</b> Bạn có <b>{approvedCount}</b> lớp học đã được Quản lý duyệt thành công!</span>
+            </div>
+          )}
+          {rejectedCount > 0 && (
+            <div className="alert danger" style={{ marginBottom: 8 }}>
+              <span>❌ <b>Thông báo từ chối:</b> Bạn có <b>{rejectedCount}</b> yêu cầu lớp học bị từ chối. Vui lòng xem lý do chi tiết trong bảng bên dưới.</span>
+            </div>
+          )}
+          {pendingCount > 0 && (
+            <div className="alert info" style={{ marginBottom: 8 }}>
+              <span>⏳ <b>Thông báo:</b> Bạn có <b>{pendingCount}</b> yêu cầu lớp học đang ở trạng thái <b>"Chờ duyệt"</b> từ ban quản lý.</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <section className="card ovf">
         <table>
           <thead>
             <tr>
-              <th>Giáo viên</th>
+              {!isTeacher && <th>Giáo viên</th>}
               <th>Ngày</th>
               <th>Giờ</th>
               <th>Bàn khu dạy học</th>
               <th>Trạng thái</th>
-              <th>Thao tác</th>
+              <th>{isTeacher ? 'Lý do / Phản hồi' : 'Thao tác'}</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((item) => (
-              <tr key={item.id}>
-                <td><b>{item.teacherName}</b></td>
-                <td>{dateText(item.date)}</td>
-                <td className="num">{String(item.startHour).padStart(2, '0')}:00 – {String(item.endHour).padStart(2, '0')}:00</td>
-                <td>Bàn {item.tables.join(', ')}</td>
-                <td>
-                  <span className={`tag ${item.status === 'approved' ? 't-bl' : item.status === 'pending' ? 't-am' : 't-rd'}`}>
-                    {item.status === 'approved' ? 'Đã duyệt' : item.status === 'pending' ? 'Chờ phê duyệt' : 'Từ chối'}
-                  </span>
-                </td>
-                <td>
-                  {item.status === 'pending' && (
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button className="btn sm" type="button" onClick={() => handleApprove(item.id)}>
-                        Duyệt
-                      </button>
-                      <button className="btn sm ghost" type="button" onClick={() => handleReject(item.id)}>
-                        Từ chối
-                      </button>
-                    </div>
-                  )}
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={isTeacher ? 5 : 6} style={{ textAlign: 'center', color: '#64748b', padding: '24px 0' }}>
+                  {isTeacher ? 'Bạn chưa có yêu cầu lớp học nào. Hãy vào mục "Sân" để đăng ký lớp dạy mới.' : 'Chưa có yêu cầu lớp học nào.'}
                 </td>
               </tr>
-            ))}
+            ) : (
+              rows.map((item) => (
+                <tr key={item.id}>
+                  {!isTeacher && <td><b>{item.teacherName}</b></td>}
+                  <td>{dateText(item.date)}</td>
+                  <td className="num">{String(item.startHour).padStart(2, '0')}:00 – {String(item.endHour).padStart(2, '0')}:00</td>
+                  <td>Bàn {item.tables.join(', ')}</td>
+                  <td>
+                    <span className={`tag ${item.status === 'approved' ? 't-ok' : item.status === 'pending' ? 't-am' : 't-rd'}`}>
+                      {item.status === 'approved' ? 'Đã duyệt' : item.status === 'pending' ? 'Chờ duyệt' : 'Từ chối'}
+                    </span>
+                  </td>
+                  <td>
+                    {isTeacher ? (
+                      item.status === 'rejected' ? (
+                        <span style={{ color: '#dc2626', fontSize: 13 }}>
+                          <b>Lý do:</b> {item.rejectReason || 'Lịch sân không phù hợp hoặc trùng lịch khác.'}
+                        </span>
+                      ) : item.status === 'approved' ? (
+                        <span style={{ color: '#16a34a', fontSize: 13 }}>
+                          ✓ Đã duyệt lên sân (Bàn {item.tables.join(', ')})
+                        </span>
+                      ) : (
+                        <span style={{ color: '#d97706', fontSize: 13 }}>
+                          ⏳ Đang chờ quản lý phê duyệt
+                        </span>
+                      )
+                    ) : (
+                      item.status === 'pending' ? (
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button className="btn sm" type="button" onClick={() => handleApprove(item.id)}>
+                            Duyệt
+                          </button>
+                          <button className="btn sm ghost" type="button" onClick={() => handleReject(item.id)}>
+                            Từ chối
+                          </button>
+                        </div>
+                      ) : item.status === 'rejected' ? (
+                        <span style={{ fontSize: 12, color: '#dc2626' }}>
+                          Lý do: {item.rejectReason || 'Không chấp thuận'}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 12, color: '#16a34a' }}>Đã duyệt</span>
+                      )
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </section>

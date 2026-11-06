@@ -676,7 +676,7 @@ function ClassRequest({ config, onNotify, onRefresh, user }: { config: Dashboard
         startHour: start,
       });
       await onRefresh();
-      onNotify('Đăng ký lớp học thành công! Hệ thống đã phân bổ 2 bàn khu dạy học và chuyển quản lý phê duyệt.');
+      onNotify("Đăng ký lớp học thành công! Yêu cầu đang ở trạng thái 'Chờ duyệt' và chuyển Quản lý phê duyệt.");
     } catch (err: any) {
       const msg = err?.response?.data?.message || (err instanceof Error ? err.message : 'Không thể đăng ký lớp.');
       onNotify(msg);
