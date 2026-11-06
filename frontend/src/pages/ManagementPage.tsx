@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { DashboardResponse, Member, User } from '../types';
 import type { PageId } from '../components/layout/Shell';
-import { approveClass, rejectClass, renewMember, updateConfig, activateMember, createStaffAccount } from '../services/api';
+import { approveClass, rejectClass, renewMember, updateConfig, activateMember, createStaffAccount, checkInClass, checkOutClass } from '../services/api';
 
 const packages = [
   { id: 'p1', name: 'Gói 1 tháng', months: 1, price: 449000 },
@@ -103,6 +103,9 @@ function ClassesPage({ dashboard, user, onNotify }: { dashboard: DashboardRespon
     return Object.values(stats);
   }, [classesList, dashboard.config.teacherPrice]);
 
+  const [rejectingClassId, setRejectingClassId] = useState<number | null>(null);
+  const [rejectReasonInput, setRejectReasonInput] = useState('Lịch sân không phù hợp hoặc trùng lịch');
+
   const rows = [...teacherClasses].sort(
     (a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || a.date.localeCompare(b.date) || a.startHour - b.startHour
   );
@@ -118,13 +121,47 @@ function ClassesPage({ dashboard, user, onNotify }: { dashboard: DashboardRespon
     }
   };
 
-  const handleReject = async (id: number) => {
+  const openRejectModal = (id: number) => {
+    setRejectingClassId(id);
+    setRejectReasonInput('Lịch sân không phù hợp hoặc trùng lịch');
+  };
+
+  const handleConfirmReject = async () => {
+    if (!rejectingClassId) return;
     try {
-      await rejectClass(id);
-      setClassesList((prev) => prev.map((item) => (item.id === id ? { ...item, status: 'rejected' } : item)));
-      onNotify('Đã từ chối lớp học.');
+      const reason = rejectReasonInput.trim() || 'Lịch sân không phù hợp';
+      await rejectClass(rejectingClassId, reason);
+      setClassesList((prev) =>
+        prev.map((item) => (item.id === rejectingClassId ? { ...item, status: 'rejected', rejectReason: reason } : item))
+      );
+      setRejectingClassId(null);
+      onNotify(`Đã từ chối lớp học. Lý do: "${reason}".`);
     } catch {
       onNotify('Lỗi khi từ chối lớp học.');
+    }
+  };
+
+  const handleClassCheckIn = async (id: number) => {
+    try {
+      const res = await checkInClass(id);
+      setClassesList((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, checkedInAt: new Date().toISOString() } : item))
+      );
+      onNotify(res.message || 'Check-in lớp học thành công! Bàn đã chuyển sang trạng thái đang học.');
+    } catch (err: any) {
+      onNotify(err?.response?.data?.message || 'Lỗi khi check-in lớp học.');
+    }
+  };
+
+  const handleClassCheckOut = async (id: number) => {
+    try {
+      const res = await checkOutClass(id);
+      setClassesList((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, checkedOutAt: new Date().toISOString() } : item))
+      );
+      onNotify(res.message || 'Check-out lớp học thành công! Bàn đã được giải phóng.');
+    } catch (err: any) {
+      onNotify(err?.response?.data?.message || 'Lỗi khi check-out lớp học.');
     }
   };
 
@@ -213,16 +250,31 @@ function ClassesPage({ dashboard, user, onNotify }: { dashboard: DashboardRespon
                           <button className="btn sm" type="button" onClick={() => handleApprove(item.id)}>
                             Duyệt
                           </button>
-                          <button className="btn sm ghost" type="button" onClick={() => handleReject(item.id)}>
+                          <button className="btn sm ghost" type="button" onClick={() => openRejectModal(item.id)}>
                             Từ chối
                           </button>
                         </div>
-                      ) : item.status === 'rejected' ? (
+                      ) : item.status === 'approved' ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          {!item.checkedInAt ? (
+                            <button className="btn sm" type="button" onClick={() => handleClassCheckIn(item.id)}>
+                              Check-in lớp
+                            </button>
+                          ) : !item.checkedOutAt ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span className="tag t-ok" style={{ fontSize: 11 }}>Đang học</span>
+                              <button className="btn sm ghost" type="button" onClick={() => handleClassCheckOut(item.id)}>
+                                Check-out lớp
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="tag t-gr" style={{ fontSize: 11 }}>Đã hoàn tất</span>
+                          )}
+                        </div>
+                      ) : (
                         <span style={{ fontSize: 12, color: '#dc2626' }}>
                           Lý do: {item.rejectReason || 'Không chấp thuận'}
                         </span>
-                      ) : (
-                        <span style={{ fontSize: 12, color: '#16a34a' }}>Đã duyệt</span>
                       )
                     )}
                   </td>
@@ -232,6 +284,47 @@ function ClassesPage({ dashboard, user, onNotify }: { dashboard: DashboardRespon
           </tbody>
         </table>
       </section>
+
+      {/* MODAL NHẬP LÝ DO TỪ CHỐI LỚP HỌC CHO QUẢN LÝ */}
+      {rejectingClassId !== null && (
+        <div className="mask" role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="card" style={{ width: 440, maxWidth: '90%', padding: 24, borderRadius: 12, background: '#fff' }}>
+            <h3 style={{ marginTop: 0, color: '#b91c1c' }}>Từ chối yêu cầu lớp học</h3>
+            <p style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>
+              Vui lòng nhập lý do từ chối để hệ thống gửi thông báo phản hồi chi tiết cho giáo viên.
+            </p>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Lý do thường gặp:</label>
+              <select
+                className="in"
+                style={{ width: '100%', marginBottom: 8 }}
+                value={rejectReasonInput}
+                onChange={(e) => setRejectReasonInput(e.target.value)}
+              >
+                <option value="Lịch sân không phù hợp hoặc trùng lịch">Lịch sân không phù hợp hoặc trùng lịch</option>
+                <option value="Trùng lịch tổ chức giải đấu nội bộ">Trùng lịch tổ chức giải đấu nội bộ</option>
+                <option value="Khu dạy học đang tiến hành bảo trì bàn">Khu dạy học đang tiến hành bảo trì bàn</option>
+                <option value="Vượt quá khung giờ quy định trước 19h">Vượt quá khung giờ quy định trước 19h</option>
+                <option value="Khác (nhập chi tiết bên dưới)">Khác (nhập chi tiết bên dưới)</option>
+              </select>
+              <textarea
+                className="in"
+                rows={3}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+                placeholder="Nhập chi tiết lý do từ chối gửi cho giáo viên..."
+                value={rejectReasonInput}
+                onChange={(e) => setRejectReasonInput(e.target.value)}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="btn ghost" type="button" onClick={() => setRejectingClassId(null)}>Hủy bỏ</button>
+              <button className="btn" style={{ background: '#dc2626', color: '#fff' }} type="button" onClick={handleConfirmReject}>
+                Xác nhận từ chối
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* TỔNG HỢP THÙ LAO GIÁO VIÊN CUỐI THÁNG (THEO QUY ĐỊNH FR17 & BR10) */}
       <section className="card" style={{ marginTop: 16 }}>
@@ -543,14 +636,67 @@ function MembersPage({ members, user, onNotify }: { members: Member[]; user: Use
 
 function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: DashboardResponse; canSeeForecast: boolean; onNotify: (message: string) => void }) {
   const payments = dashboard.payments;
+  const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
+
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+
+  // Tính doanh thu hôm nay
+  const todayRevenue = useMemo(() => {
+    return payments
+      .filter((p) => p.createdAt && p.createdAt.slice(0, 10) === todayStr)
+      .reduce((sum, p) => sum + p.amount, 0);
+  }, [payments, todayStr]);
+
+  // Tính doanh thu tuần này (tính từ thứ Hai đầu tuần)
+  const dayOfWeek = (now.getDay() + 6) % 7; // Thứ 2 = 0, CN = 6
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - dayOfWeek);
+  startOfWeek.setHours(0, 0, 0, 0);
+
+  const weekRevenue = useMemo(() => {
+    return payments
+      .filter((p) => new Date(p.createdAt) >= startOfWeek)
+      .reduce((sum, p) => sum + p.amount, 0);
+  }, [payments, startOfWeek]);
+
+  // Tính doanh thu tháng này
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+
+  const monthRevenue = useMemo(() => {
+    return payments
+      .filter((p) => {
+        const d = new Date(p.createdAt);
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      })
+      .reduce((sum, p) => sum + p.amount, 0);
+  }, [payments, currentMonth, currentYear]);
+
+  // Lọc danh sách thanh toán theo kỳ đã chọn
+  const filteredPayments = useMemo(() => {
+    if (periodFilter === 'today') {
+      return payments.filter((p) => p.createdAt && p.createdAt.slice(0, 10) === todayStr);
+    }
+    if (periodFilter === 'week') {
+      return payments.filter((p) => new Date(p.createdAt) >= startOfWeek);
+    }
+    if (periodFilter === 'month') {
+      return payments.filter((p) => {
+        const d = new Date(p.createdAt);
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      });
+    }
+    return payments;
+  }, [payments, periodFilter, todayStr, startOfWeek, currentMonth, currentYear]);
 
   const exportCSV = () => {
-    if (!payments.length) {
+    if (!filteredPayments.length) {
       onNotify('Chưa có dữ liệu thanh toán để xuất báo cáo.');
       return;
     }
     const headers = ['STT', 'Thời gian', 'Loại giao dịch', 'Tham chiếu / Khách hàng', 'Người thu', 'Số tiền (VNĐ)'];
-    const rows = payments.map((p, idx) => [
+    const rows = filteredPayments.map((p, idx) => [
       idx + 1,
       `"${new Date(p.createdAt).toLocaleString('vi-VN')}"`,
       `"${p.type === 'goi' ? 'Gói tháng' : 'Tiền chơi lẻ'}"`,
@@ -558,8 +704,8 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
       `"${p.who.replace(/"/g, '""')}"`,
       p.amount,
     ]);
-    const total = payments.reduce((sum, item) => sum + item.amount, 0);
-    rows.push(['TỔNG CỘNG', '', '', `"${payments.length} giao dịch"`, '', total]);
+    const total = filteredPayments.reduce((sum, item) => sum + item.amount, 0);
+    rows.push(['TỔNG CỘNG', '', '', `"${filteredPayments.length} giao dịch"`, '', total]);
     const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -571,7 +717,7 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
     document.body.removeChild(link);
     onNotify('Đã xuất báo cáo doanh thu thành công (file CSV tương thích Excel)!');
   };
-  const max = Math.max(...payments.map((item) => item.amount), 1);
+  const max = Math.max(...filteredPayments.map((item) => item.amount), 1);
 
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
 
@@ -667,12 +813,36 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
       </div>
 
       <section className="card">
-        <h3>Doanh thu ghi nhận</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Báo cáo Doanh thu</h3>
+            <p className="hint" style={{ margin: '2px 0 0' }}>Theo dõi chi tiết doanh thu hôm nay, tuần này, tháng này và toàn thời gian.</p>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className={`btn sm ${periodFilter === 'all' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('all')}>Tất cả</button>
+            <button className={`btn sm ${periodFilter === 'today' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('today')}>Hôm nay</button>
+            <button className={`btn sm ${periodFilter === 'week' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('week')}>Tuần này</button>
+            <button className={`btn sm ${periodFilter === 'month' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('month')}>Tháng này</button>
+          </div>
+        </div>
+
         <div className="kpi" style={{ marginTop: 12 }}>
-          <div><b>{money(dashboard.stats.totalRevenue)}</b><span>Tổng doanh thu</span></div>
-          <div><b>{payments.length}</b><span>Giao dịch thành công</span></div>
-          <div><b>{dashboard.stats.todayBookings}</b><span>Lượt đặt sân</span></div>
-          <div><b>{dashboard.stats.activeMembers}</b><span>Khách tháng đang hoạt động</span></div>
+          <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: 8, padding: 12 }}>
+            <b style={{ color: '#0f172a' }}>{money(todayRevenue)}</b>
+            <span>Doanh thu Hôm nay</span>
+          </div>
+          <div style={{ background: '#eff6ff', border: '1.5px solid #3b82f6', borderRadius: 8, padding: 12 }}>
+            <b style={{ color: '#1d4ed8' }}>{money(weekRevenue)}</b>
+            <span>Doanh thu Tuần này</span>
+          </div>
+          <div style={{ background: '#f0fdf4', border: '1.5px solid #22c55e', borderRadius: 8, padding: 12 }}>
+            <b style={{ color: '#15803d' }}>{money(monthRevenue)}</b>
+            <span>Doanh thu Tháng này</span>
+          </div>
+          <div style={{ background: '#faf5ff', border: '1px solid #c084fc', borderRadius: 8, padding: 12 }}>
+            <b style={{ color: '#7e22ce' }}>{money(dashboard.stats.totalRevenue)}</b>
+            <span>Tổng tích lũy</span>
+          </div>
         </div>
       </section>
 
@@ -744,7 +914,10 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
 
       <section className="card" style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <h3>Nhật ký thanh toán tiền</h3>
+          <div>
+            <h3 style={{ margin: 0 }}>Nhật ký thanh toán ({periodFilter === 'all' ? 'Tất cả' : periodFilter === 'today' ? 'Hôm nay' : periodFilter === 'week' ? 'Tuần này' : 'Tháng này'})</h3>
+            <small className="hint">{filteredPayments.length} giao dịch ghi nhận</small>
+          </div>
           <button className="btn" type="button" onClick={exportCSV} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <span>📥 Xuất báo cáo (CSV/Excel)</span>
           </button>
@@ -753,21 +926,29 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
           <table>
             <thead>
               <tr>
-                <th>Giờ</th>
+                <th>Thời gian</th>
                 <th>Khoản thu</th>
                 <th>Nhân viên</th>
                 <th className="num">Số tiền</th>
               </tr>
             </thead>
             <tbody>
-              {payments.map((payment) => (
-                <tr key={payment.id}>
-                  <td className="num">{new Date(payment.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</td>
-                  <td>{payment.reference} <span className={`tag ${payment.type === 'goi' ? 't-bl' : 't-ok'}`}>{payment.type === 'goi' ? 'Gói' : 'Tiền chơi'}</span></td>
-                  <td>{payment.who}</td>
-                  <td className="num">{money(payment.amount)}</td>
+              {filteredPayments.length === 0 ? (
+                <tr>
+                  <td colSpan={4} style={{ textAlign: 'center', color: '#64748b', padding: '18px 0' }}>
+                    Chưa có giao dịch thanh toán nào trong kỳ {periodFilter === 'all' ? 'này' : periodFilter === 'today' ? 'hôm nay' : periodFilter === 'week' ? 'tuần này' : 'tháng này'}.
+                  </td>
                 </tr>
-              ))}
+              ) : (
+                filteredPayments.map((payment) => (
+                  <tr key={payment.id}>
+                    <td className="num">{new Date(payment.createdAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}</td>
+                    <td>{payment.reference} <span className={`tag ${payment.type === 'goi' ? 't-bl' : 't-ok'}`}>{payment.type === 'goi' ? 'Gói' : 'Tiền chơi'}</span></td>
+                    <td>{payment.who}</td>
+                    <td className="num">{money(payment.amount)}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

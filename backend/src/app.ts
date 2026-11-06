@@ -523,6 +523,42 @@ app.post(['/api/classes/:id/reject', '/api/lop-hoc/:id/tu-choi'], (req, res) => 
   res.json({ ok: true, message: `Đã từ chối lớp học của ${session.teacherName}. Lý do: ${reason}`, session });
 });
 
+// Check-in lớp học (Quản lý hoặc Nhân viên)
+app.post(['/api/classes/:id/checkin', '/api/lop-hoc/:id/checkin'], (req, res) => {
+  const id = Number(req.params.id);
+  const session = dashboardData.classes.find((c) => c.id === id);
+  if (!session) return res.status(404).json({ message: 'Không tìm thấy lớp học.' });
+  if (session.status !== 'approved') {
+    return res.status(400).json({ message: 'Chỉ có thể check-in cho lớp học đã được phê duyệt.' });
+  }
+  session.checkedInAt = new Date().toISOString();
+  // Cập nhật trạng thái các bàn của lớp học sang 'busy'
+  session.tables.forEach((tNum) => {
+    const table = dashboardData.tables.find((t) => t.tableNumber === tNum);
+    if (table) table.status = 'busy';
+  });
+  persistStore();
+  res.json({ ok: true, message: `Check-in thành công cho lớp học của ${session.teacherName} (Bàn ${session.tables.join(', ')}).`, session });
+});
+
+// Check-out lớp học (Quản lý hoặc Nhân viên)
+app.post(['/api/classes/:id/checkout', '/api/lop-hoc/:id/checkout'], (req, res) => {
+  const id = Number(req.params.id);
+  const session = dashboardData.classes.find((c) => c.id === id);
+  if (!session) return res.status(404).json({ message: 'Không tìm thấy lớp học.' });
+  if (!session.checkedInAt) {
+    return res.status(400).json({ message: 'Lớp học chưa được check-in.' });
+  }
+  session.checkedOutAt = new Date().toISOString();
+  // Giải phóng các bàn của lớp học sang 'available'
+  session.tables.forEach((tNum) => {
+    const table = dashboardData.tables.find((t) => t.tableNumber === tNum);
+    if (table) table.status = 'available';
+  });
+  persistStore();
+  res.json({ ok: true, message: `Check-out hoàn tất cho lớp học của ${session.teacherName}. Bàn ${session.tables.join(', ')} đã được giải phóng.`, session });
+});
+
 // ==========================================
 // 7. KHÁCH THÁNG & GIA HẠN GÓI CỘNG DỒN LƯỢT
 // ==========================================

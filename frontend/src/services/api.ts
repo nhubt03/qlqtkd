@@ -73,6 +73,16 @@ export async function rejectClass(classId: number, reason?: string): Promise<voi
   await api.post(`/classes/${classId}/reject`, { reason });
 }
 
+export async function checkInClass(classId: number): Promise<any> {
+  const res = await api.post(`/classes/${classId}/checkin`);
+  return res.data;
+}
+
+export async function checkOutClass(classId: number): Promise<any> {
+  const res = await api.post(`/classes/${classId}/checkout`);
+  return res.data;
+}
+
 export async function renewMember(memberId: number, packageId: string): Promise<any> {
   const { data } = await api.post(`/members/${memberId}/renew`, { packageId });
   return data;
