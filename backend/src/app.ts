@@ -371,14 +371,56 @@ const handleCheckOut = (req: express.Request, res: express.Response) => {
     const member = booking.memberId
       ? dashboardData.members.find((m) => m.id === booking.memberId)
       : dashboardData.members.find((m) => m.phone === booking.phone);
+
     if (member) {
-      // Quy tắc đặc tả: Mặc định 2 giờ/lượt, quá giờ tính thêm lượt (VD: 3h tính 2 lượt)
-      const turnsToDeduct = Math.max(1, Math.ceil(booking.duration / 2));
-      member.usedTurns += turnsToDeduct;
-      const left = Math.max(0, member.totalTurns - member.usedTurns);
-      if (left <= 0) member.status = 'expired';
-      else if (left <= 5) member.status = 'warning';
-      message = `Check-out thành công. Khách tháng đã dùng ${turnsToDeduct} lượt (${booking.duration} giờ chơi), còn ${left}/${member.totalTurns} lượt. Không thu tiền mặt.`;
+      const checkInTime = booking.checkedInAt ? new Date(booking.checkedInAt).getTime() : new Date(booking.startTime).getTime();
+      const actualHours = Math.max(1, Math.round(((Date.now() - checkInTime) / 3600000) * 10) / 10);
+      const playHours = Math.max(booking.duration, actualHours);
+
+      // Quy tắc đặc tả: <= 2 tiếng trừ 1 lượt, trên 2 tiếng trừ 2 lượt
+      const turnsRequired = playHours <= 2 ? 1 : 2;
+      const leftBefore = Math.max(0, member.totalTurns - member.usedTurns);
+
+      if (leftBefore >= turnsRequired) {
+        member.usedTurns += turnsRequired;
+        const leftAfter = Math.max(0, member.totalTurns - member.usedTurns);
+        if (leftAfter <= 0) member.status = 'expired';
+        else if (leftAfter <= 5) member.status = 'warning';
+        message = `Check-out thành công. Khách tháng đã trừ ${turnsRequired} lượt (${playHours} giờ chơi), còn ${leftAfter}/${member.totalTurns} lượt. Không thu tiền mặt.`;
+      } else if (leftBefore > 0) {
+        // Không đủ lượt: trừ hết số lượt còn lại (mỗi lượt 2 giờ) và phụ thu thời gian vượt gói
+        const coveredHours = leftBefore * 2;
+        const uncoveredHours = Math.max(0, playHours - coveredHours);
+        member.usedTurns += leftBefore;
+        member.status = 'expired';
+
+        const extraAmount = Math.round(booking.people * uncoveredHours * dashboardData.config.courtPrice);
+        finalAmount = extraAmount;
+        if (extraAmount > 0) {
+          dashboardData.payments.push({
+            id: dashboardData.payments.length + 1,
+            type: 'tien_choi',
+            amount: extraAmount,
+            reference: `Phụ thu vượt gói: Bàn ${booking.tableId} · ${booking.customerName} (${uncoveredHours}h)`,
+            who: 'Nhân viên quầy',
+            createdAt: new Date().toISOString(),
+          });
+        }
+        message = `Check-out thành công. Khách tháng đã dùng ${leftBefore} lượt còn lại. Thu phụ phí ngoài gói ${uncoveredHours} giờ: ${extraAmount.toLocaleString('vi-VN')}đ.`;
+      } else {
+        // Khách tháng hết lượt (0 lượt): tính tiền như khách vãng lai
+        const fullAmount = Math.round(booking.people * playHours * dashboardData.config.courtPrice);
+        finalAmount = fullAmount;
+        dashboardData.payments.push({
+          id: dashboardData.payments.length + 1,
+          type: 'tien_choi',
+          amount: fullAmount,
+          reference: `Bàn ${booking.tableId} · ${booking.customerName} (Khách tháng 0 lượt)`,
+          who: 'Nhân viên quầy',
+          createdAt: new Date().toISOString(),
+        });
+        message = `Khách tháng đã hết lượt (0 lượt). Thu tiền theo giá thông thường: ${fullAmount.toLocaleString('vi-VN')}đ.`;
+      }
     } else {
       message = 'Check-out thành công cho khách tháng.';
     }
@@ -863,27 +905,28 @@ app.post('/api/ai/chat', (req, res) => {
 
   // 3. Giờ bắt đầu
   let time = '19:00';
+  let hasTime = false;
   const prefixTime = raw.match(/(?:từ|tu|lúc|luc|vào|vao)\s+(\d{1,2})(?::(\d{2})|\s*(?:h|giờ|gio)(?:\s*(\d{2}))?)?\s*(tối|toi|chiều|chieu|sáng|sang|pm|am)?/);
+  const suffixTime = raw.match(/(\d{1,2})(?::(\d{2})|\s*(?:h|giờ|gio)(?:\s*(\d{2}))?)\s*(tối|toi|chiều|chieu|sáng|sang|pm|am)/);
+  const genericTime = raw.match(/(?<!trong\s|chơi\s|choi\s)(\b(1[0-9]|2[0-2]|[6-9])\s*(?:h|:00)\b)/);
+
   if (prefixTime) {
     let h = parseInt(prefixTime[1], 10);
     const m = prefixTime[2] || prefixTime[3] ? parseInt(prefixTime[2] || prefixTime[3], 10) : 0;
     const period = prefixTime[4] || '';
     if ((period.includes('tối') || period.includes('toi') || period.includes('chiều') || period.includes('chieu') || period === 'pm') && h < 12) h += 12;
     time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  } else {
-    const suffixTime = raw.match(/(\d{1,2})(?::(\d{2})|\s*(?:h|giờ|gio)(?:\s*(\d{2}))?)\s*(tối|toi|chiều|chieu|sáng|sang|pm|am)/);
-    if (suffixTime) {
-      let h = parseInt(suffixTime[1], 10);
-      const m = suffixTime[2] || suffixTime[3] ? parseInt(suffixTime[2] || suffixTime[3], 10) : 0;
-      const period = suffixTime[4] || '';
-      if ((period.includes('tối') || period.includes('toi') || period.includes('chiều') || period.includes('chieu') || period === 'pm') && h < 12) h += 12;
-      time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-    } else {
-      const genericTime = raw.match(/(?<!trong\s|chơi\s|choi\s)(\b(1[0-9]|2[0-2]|[6-9])\s*(?:h|:00)\b)/);
-      if (genericTime) {
-        time = `${String(genericTime[2]).padStart(2, '0')}:00`;
-      }
-    }
+    hasTime = true;
+  } else if (suffixTime) {
+    let h = parseInt(suffixTime[1], 10);
+    const m = suffixTime[2] || suffixTime[3] ? parseInt(suffixTime[2] || suffixTime[3], 10) : 0;
+    const period = suffixTime[4] || '';
+    if ((period.includes('tối') || period.includes('toi') || period.includes('chiều') || period.includes('chieu') || period === 'pm') && h < 12) h += 12;
+    time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    hasTime = true;
+  } else if (genericTime) {
+    time = `${String(genericTime[2]).padStart(2, '0')}:00`;
+    hasTime = true;
   }
 
   // 4. Thời lượng
@@ -900,7 +943,7 @@ app.post('/api/ai/chat', (req, res) => {
   let score = 0;
   if (pMatch || raw.includes('đánh đôi') || raw.includes('đánh đơn')) score += 25;
   if (explicitDate || raw.includes('mai') || raw.includes('mốt')) score += 25;
-  if (prefixTime || suffixTime) score += 25;
+  if (hasTime) score += 25;
   if (hasDuration) score += 25;
 
   const confidence = score;

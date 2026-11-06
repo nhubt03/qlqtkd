@@ -369,23 +369,49 @@ export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
       </div>
       {successModal && <BookingSuccessModal info={successModal} onClose={() => setSuccessModal(null)} />}
 
-      {/* MODAL CHECK-OUT CHO KHÁCH VÃNG LAI: HIỂN THỊ SỐ TIỀN CẦN THANH TOÁN TRƯỚC KHI XÁC NHẬN */}
+      {/* MODAL CHECK-OUT: HIỂN THỊ SỐ TIỀN CẦN THANH TOÁN HOẶC LƯỢT TRỪ TRƯỚC KHI XÁC NHẬN */}
       {walkInCheckoutTarget && (() => {
         const { booking, tableNumber } = walkInCheckoutTarget;
         const checkInTime = booking.checkedInAt ? new Date(booking.checkedInAt).getTime() : new Date(booking.startTime).getTime();
         const nowTime = Date.now();
         const actualHours = Math.max(1, Math.round(((nowTime - checkInTime) / 3600000) * 10) / 10);
         const billableHours = Math.max(booking.duration, Math.ceil(actualHours));
-        const payableAmount = booking.amount > 0 && billableHours === booking.duration ? booking.amount : (booking.people * billableHours * data.config.courtPrice);
+
+        const isMember = booking.type === 'MEMBER';
+        const member = isMember ? data.members.find((m) => m.id === booking.memberId || m.phone === booking.phone) : null;
+        const leftTurns = member ? Math.max(0, member.totalTurns - member.usedTurns) : 0;
+        const turnsNeeded = billableHours <= 2 ? 1 : 2;
+
+        let payableAmount = 0;
+        let memberDeductText = '';
+
+        if (!isMember) {
+          payableAmount = booking.amount > 0 && billableHours === booking.duration ? booking.amount : (booking.people * billableHours * data.config.courtPrice);
+        } else {
+          if (leftTurns >= turnsNeeded) {
+            payableAmount = 0;
+            memberDeductText = `Trừ ${turnsNeeded} lượt trong gói tháng (${billableHours}h chơi). Không thu tiền mặt.`;
+          } else if (leftTurns > 0) {
+            const coveredHours = leftTurns * 2;
+            const uncoveredHours = Math.max(0, billableHours - coveredHours);
+            payableAmount = booking.people * uncoveredHours * data.config.courtPrice;
+            memberDeductText = `Trừ ${leftTurns} lượt còn lại (${coveredHours}h). Phụ thu ngoài gói cho ${uncoveredHours}h vượt quá.`;
+          } else {
+            payableAmount = booking.people * billableHours * data.config.courtPrice;
+            memberDeductText = `Khách tháng đã hết lượt (0 lượt). Tính phí theo giá thông thường khách vãng lai.`;
+          }
+        }
 
         return (
           <div className="mask" role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div className="card" style={{ width: 480, maxWidth: '92%', padding: 24, borderRadius: 12, background: '#fff' }}>
               <h3 style={{ marginTop: 0, color: '#b91c1c', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span>💳 Xác nhận Check-out & Thu tiền (Khách vãng lai)</span>
+                <span>💳 Xác nhận Check-out {isMember ? '(Khách tháng)' : '(Khách vãng lai)'}</span>
               </h3>
               <p style={{ fontSize: 13, color: '#64748b', marginBottom: 14 }}>
-                Vui lòng kiểm tra số tiền cần thu trước khi xác nhận hoàn tất check-out và giải phóng bàn.
+                {payableAmount > 0
+                  ? 'Vui lòng kiểm tra số tiền cần thu trước khi xác nhận hoàn tất check-out.'
+                  : 'Xác nhận hoàn tất lượt chơi và giải phóng bàn.'}
               </p>
               <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 14, marginBottom: 16 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr', gap: '6px 12px', fontSize: 14 }}>
@@ -393,21 +419,31 @@ export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
                   <b>{booking.customerName} ({booking.phone || 'Không có SĐT'})</b>
                   <span style={{ color: '#64748b' }}>Bàn sử dụng:</span>
                   <b>Bàn {tableNumber}</b>
+                  <span style={{ color: '#64748b' }}>Hình thức:</span>
+                  <span>{isMember ? 'Khách tháng (Hội viên)' : 'Khách vãng lai'}</span>
                   <span style={{ color: '#64748b' }}>Số người chơi:</span>
                   <b>{booking.people} người</b>
                   <span style={{ color: '#64748b' }}>Giờ check-in:</span>
                   <span>{new Date(checkInTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</span>
                   <span style={{ color: '#64748b' }}>Giờ check-out:</span>
                   <span>{new Date(nowTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} (Hiện tại)</span>
-                  <span style={{ color: '#64748b' }}>Thời lượng tính phí:</span>
+                  <span style={{ color: '#64748b' }}>Thời lượng:</span>
                   <b>{billableHours} giờ</b>
-                  <span style={{ color: '#64748b' }}>Đơn giá sân:</span>
-                  <span>{data.config.courtPrice.toLocaleString('vi-VN')}đ / người / giờ</span>
+                  {isMember && (
+                    <>
+                      <span style={{ color: '#64748b' }}>Trừ gói tháng:</span>
+                      <b style={{ color: '#166534' }}>{memberDeductText}</b>
+                    </>
+                  )}
                 </div>
 
                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1.5px dashed #cbd5e1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>SỐ TIỀN CẦN THU:</span>
-                  <span style={{ fontSize: 24, fontWeight: 900, color: '#dc2626' }}>{payableAmount.toLocaleString('vi-VN')}đ</span>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>
+                    {payableAmount > 0 ? 'SỐ TIỀN CẦN THU:' : 'TIỀN MẶT CẦN THU:'}
+                  </span>
+                  <span style={{ fontSize: 24, fontWeight: 900, color: payableAmount > 0 ? '#dc2626' : '#16a34a' }}>
+                    {payableAmount > 0 ? `${payableAmount.toLocaleString('vi-VN')}đ` : '0đ (Trừ lượt gói)'}
+                  </span>
                 </div>
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -422,7 +458,7 @@ export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
                     await handleCheckOut(bId);
                   }}
                 >
-                  ✓ Xác nhận đã thu {payableAmount.toLocaleString('vi-VN')}đ & Hoàn tất Check-out
+                  ✓ Xác nhận Hoàn tất Check-out
                 </button>
               </div>
             </div>
@@ -513,14 +549,10 @@ function CourtDetail({
           style={{ width: '100%', marginTop: 14, fontWeight: 'bold' }}
           type="button"
           onClick={() => {
-            if (booking.type === 'WALK_IN') {
-              onOpenWalkInCheckout({ booking, tableNumber: table.tableNumber });
-            } else {
-              onCheckOut(booking.id);
-            }
+            onOpenWalkInCheckout({ booking, tableNumber: table.tableNumber });
           }}
         >
-          {booking.type === 'WALK_IN' ? 'Check-out & Tính tiền' : 'Check-out hoàn tất'}
+          Check-out & Xác nhận
         </button>
       )}
 
