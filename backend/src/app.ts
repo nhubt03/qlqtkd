@@ -7,14 +7,33 @@ import { fileURLToPath } from 'node:url';
 import { dashboardData } from './data/mock.js';
 import { isDbConnected } from './services/db.js';
 import { sendBookingConfirmationEmail, getEmailLogs, sendOtpEmail } from './services/mailer.js';
-import { sweepExpiredBookings } from './services/scheduler.js';
+import { sweepExpiredBookings, sweepExpiredMemberships } from './services/scheduler.js';
 import { initStorage, persistStore } from './services/storage.js';
 import { hashPassword, verifyPassword, createJwtToken } from './services/security.js';
+import type { Role, TransferredConversation, TransferredMessage, User } from './types.js';
 
 dotenv.config();
 
 // Khởi tạo hệ thống lưu trữ vĩnh viễn (Data Persistence on Disk)
 initStorage();
+
+/**
+ * Ghi nhật ký bảo mật hệ thống (Audit Log - Mục 9)
+ */
+export function recordAuditLog(actorEmail: string, actorRole: string, action: string, details: string) {
+  dashboardData.auditLogs = dashboardData.auditLogs || [];
+  const log = {
+    id: dashboardData.auditLogs.length + 1,
+    timestamp: new Date().toISOString(),
+    actorEmail,
+    actorRole,
+    action,
+    details,
+  };
+  dashboardData.auditLogs.push(log);
+  persistStore();
+  return log;
+}
 
 const app = express();
 
@@ -80,7 +99,7 @@ const handleLogin = (req: express.Request, res: express.Response) => {
   }
 
   const passStr = String(password || '');
-  const isMatch = verifyPassword(passStr, user.password);
+  const isMatch = verifyPassword(passStr, user.password || '');
 
   if (!isMatch) {
     return res.status(401).json({ message: 'Sai tài khoản hoặc mật khẩu.' });
@@ -95,7 +114,15 @@ const handleLogin = (req: express.Request, res: express.Response) => {
   });
 
   const { password: _password, ...safeUser } = user;
-  return res.json({ ok: true, user: safeUser, token });
+  return res.json({
+    ok: true,
+    user: {
+      ...safeUser,
+      firstLogin: !!user.firstLogin,
+    },
+    token,
+    mustChangePassword: !!user.firstLogin,
+  });
 };
 
 app.post('/api/auth/login', handleLogin);
@@ -677,6 +704,37 @@ const handleActivateMember = (req: express.Request, res: express.Response) => {
   if (matchedUser) {
     matchedUser.role = 'MEMBER';
     matchedUser.memberId = newMemberId;
+    if (!matchedUser.password) {
+      matchedUser.password = hashPassword('123456');
+      matchedUser.firstLogin = true;
+    }
+    recordAuditLog(
+      String(staffName || 'quầy'),
+      'STAFF',
+      'UPGRADE_GUEST_TO_MEMBER',
+      `Khách hàng ${matchedUser.name} (${matchedUser.phone}) đăng ký gói ${pack.name}. Tự động chuyển loại tài khoản sang Khách tháng, toàn bộ dữ liệu cá nhân, lịch sử đặt bàn và giao dịch được giữ nguyên.`
+    );
+  } else {
+    // Chưa có tài khoản: Tạo mới tài khoản khách tháng với mật khẩu mặc định 123456 (đã mã hóa) và kích hoạt firstLogin
+    const newUserId = dashboardData.users.length > 0 ? Math.max(...dashboardData.users.map((u) => u.id)) + 1 : 1;
+    const createdUser: User = {
+      id: newUserId,
+      name: newMember.name,
+      phone: newMember.phone,
+      email: newMember.email || `${cleanPhone}@pingpongbros.customer`,
+      password: hashPassword('123456'), // Mã hóa an toàn scrypt
+      role: 'MEMBER',
+      memberId: newMemberId,
+      firstLogin: true, // Kích hoạt bắt buộc đổi mật khẩu lần đầu
+    };
+    dashboardData.users.push(createdUser);
+    matchedUser = createdUser;
+    recordAuditLog(
+      String(staffName || 'quầy'),
+      'STAFF',
+      'CREATE_MEMBER_ACCOUNT',
+      `Tạo mới tài khoản khách tháng cho ${createdUser.name} (${createdUser.phone}) khi đăng ký ${pack.name}. Mật khẩu mặc định 123456 đã được mã hóa, firstLogin=true.`
+    );
   }
 
   // Ghi nhận thanh toán tiền gói vào hệ thống
@@ -799,10 +857,461 @@ app.post('/api/khach-thang/:id/gia-han', handleRenewMember);
 // 8. THỐNG KÊ DOANH THU & GIỜ CAO ĐIỂM
 // ==========================================
 app.get('/api/payments', (_req, res) => res.json(dashboardData.payments));
-app.get('/api/thong-ke/doanh-thu', (_req, res) => {
+
+// API Báo cáo Doanh thu - Kiểm tra quyền nghiêm ngặt (Mục 3)
+// Nhân viên: CHỈ ĐƯỢC XEM HÔM NAY. Không được xem tuần, tháng, quý, năm, tổng hợp -> 403 Forbidden
+// Quản lý: Được xem toàn bộ (ngày, tuần, tháng, quý, năm, tổng hợp)
+app.get(['/api/thong-ke/doanh-thu', '/api/reports/revenue'], (req, res) => {
+  const role = String(req.query.role || req.headers['x-user-role'] || 'GUEST');
+  const period = String(req.query.period || 'today').toLowerCase();
+
+  // Khách vãng lai, Khách tháng, Giáo viên: TUYỆT ĐỐI BỊ CHẶN
+  if (role === 'GUEST' || role === 'MEMBER' || role === 'TEACHER') {
+    return res.status(403).json({
+      ok: false,
+      message: 'Quyền truy cập bị từ chối: Tài khoản của bạn không được phép xem thông tin doanh thu của câu lạc bộ.',
+    });
+  }
+
+  // Nhân viên: CHỈ ĐƯỢC XEM DOANH THU TRONG NGÀY
+  if (role === 'STAFF') {
+    if (period !== 'today') {
+      return res.status(403).json({
+        ok: false,
+        message: 'Quyền truy cập bị từ chối: Theo quy định bảo mật, Nhân viên chỉ được xem doanh thu trong ngày hiện tại. Không được xem doanh thu theo tuần, tháng, quý, năm hoặc báo cáo tổng hợp.',
+      });
+    }
+  }
+
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const payments = dashboardData.payments || [];
+
+  const todayPayments = payments.filter((p) => p.createdAt && p.createdAt.slice(0, 10) === todayStr);
+  const todayRev = todayPayments.reduce((s, p) => s + p.amount, 0);
+
+  if (period === 'today') {
+    return res.json({
+      ok: true,
+      period: 'today',
+      revenue: todayRev,
+      transactionCount: todayPayments.length,
+      payments: todayPayments,
+    });
+  }
+
+  // Quản lý (MANAGER) được tính toán và xem toàn bộ các kỳ
+  const dayOfWeek = (now.getDay() + 6) % 7;
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - dayOfWeek);
+  startOfWeek.setHours(0, 0, 0, 0);
+  const weekPayments = payments.filter((p) => new Date(p.createdAt) >= startOfWeek);
+  const weekRev = weekPayments.reduce((s, p) => s + p.amount, 0);
+
+  const curMonth = now.getMonth();
+  const curYear = now.getFullYear();
+  const monthPayments = payments.filter((p) => {
+    const d = new Date(p.createdAt);
+    return d.getMonth() === curMonth && d.getFullYear() === curYear;
+  });
+  const monthRev = monthPayments.reduce((s, p) => s + p.amount, 0);
+
+  // Quý hiện tại (Q1: 0-2, Q2: 3-5, Q3: 6-8, Q4: 9-11)
+  const curQuarter = Math.floor(curMonth / 3);
+  const quarterPayments = payments.filter((p) => {
+    const d = new Date(p.createdAt);
+    return Math.floor(d.getMonth() / 3) === curQuarter && d.getFullYear() === curYear;
+  });
+  const quarterRev = quarterPayments.reduce((s, p) => s + p.amount, 0);
+
+  // Năm hiện tại
+  const yearPayments = payments.filter((p) => new Date(p.createdAt).getFullYear() === curYear);
+  const yearRev = yearPayments.reduce((s, p) => s + p.amount, 0);
+
+  const totalRev = payments.reduce((s, p) => s + p.amount, 0);
+
+  let selectedPayments = payments;
+  let selectedRev = totalRev;
+  if (period === 'week') { selectedPayments = weekPayments; selectedRev = weekRev; }
+  else if (period === 'month') { selectedPayments = monthPayments; selectedRev = monthRev; }
+  else if (period === 'quarter') { selectedPayments = quarterPayments; selectedRev = quarterRev; }
+  else if (period === 'year') { selectedPayments = yearPayments; selectedRev = yearRev; }
+
+  return res.json({
+    ok: true,
+    period,
+    revenue: selectedRev,
+    transactionCount: selectedPayments.length,
+    payments: selectedPayments,
+    summary: {
+      today: todayRev,
+      week: weekRev,
+      month: monthRev,
+      quarter: quarterRev,
+      year: yearRev,
+      total: totalRev,
+    },
+  });
+});
+
+// API Xuất báo cáo Doanh thu - Chỉ dành cho Quản lý (Mục 3)
+app.post(['/api/reports/export', '/api/thong-ke/xuat-bao-cao'], (req, res) => {
+  const role = req.body?.role || req.headers['x-user-role'];
+  if (role !== 'MANAGER') {
+    return res.status(403).json({
+      ok: false,
+      message: 'Quyền truy cập bị từ chối: Tính năng xuất báo cáo doanh thu chỉ dành riêng cho Quản lý. Nhân viên không có quyền thực hiện.',
+    });
+  }
+
+  recordAuditLog(
+    req.body?.email || 'admin@pingpongbros.vn',
+    'MANAGER',
+    'EXPORT_REVENUE_REPORT',
+    'Quản lý đã xuất file báo cáo doanh thu hệ thống.'
+  );
+
+  res.json({ ok: true, message: 'Cho phép xuất báo cáo thành công.' });
+});
+
+// API Đổi mật khẩu lần đăng nhập đầu tiên (Mục 6)
+app.post('/api/auth/first-login-change-password', (req, res) => {
+  const { userId, email, oldPassword, newPassword } = req.body ?? {};
+  if (!newPassword || String(newPassword).length < 6) {
+    return res.status(400).json({ message: 'Mật khẩu mới phải có độ dài tối thiểu 6 ký tự.' });
+  }
+
+  if (newPassword === '123456') {
+    return res.status(400).json({ message: 'Vui lòng chọn mật khẩu mới khác mật khẩu mặc định 123456.' });
+  }
+
+  const user = dashboardData.users.find(
+    (u) => (userId && u.id === Number(userId)) || (email && u.email.toLowerCase() === String(email).toLowerCase())
+  );
+
+  if (!user) {
+    return res.status(404).json({ message: 'Không tìm thấy tài khoản người dùng.' });
+  }
+
+  if (user.password && oldPassword && !verifyPassword(String(oldPassword), user.password)) {
+    return res.status(400).json({ message: 'Mật khẩu hiện tại không chính xác.' });
+  }
+
+  // Mã hóa mật khẩu mới trước khi lưu trữ
+  user.password = hashPassword(String(newPassword));
+  user.firstLogin = false; // Hủy trạng thái bắt buộc đổi mật khẩu
+
+  persistStore();
+
+  recordAuditLog(
+    user.email,
+    user.role,
+    'FIRST_LOGIN_CHANGE_PASSWORD',
+    `Người dùng ${user.name} (${user.email}) đã đổi mật khẩu thành công ở lần đăng nhập đầu tiên. Mật khẩu mới đã được mã hóa.`
+  );
+
+  const { password: _p, ...safeUser } = user;
+  const token = createJwtToken({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    name: user.name,
+  });
+
   res.json({
-    totalRevenue: dashboardData.payments.reduce((sum, item) => sum + item.amount, 0),
-    payments: dashboardData.payments,
+    ok: true,
+    message: 'Đổi mật khẩu thành công! Bạn có thể sử dụng hệ thống bình thường.',
+    user: safeUser,
+    token,
+  });
+});
+
+// API Tạo tài khoản khách tháng (Mục 4 & Mục 7)
+// Người được phép tạo: Quản lý hoặc Nhân viên
+// Mật khẩu mặc định: 123456 (đã mã hóa)
+// Trạng thái firstLogin = true
+app.post(['/api/users/member', '/api/khach-thang/tai-khoan'], (req, res) => {
+  const { name, phone, email, packageId, staffEmail, staffRole } = req.body ?? {};
+  const requesterRole = staffRole || req.headers['x-user-role'] || 'GUEST';
+
+  if (requesterRole !== 'MANAGER' && requesterRole !== 'STAFF') {
+    return res.status(403).json({
+      ok: false,
+      message: 'Quyền truy cập bị từ chối: Chỉ Quản lý và Nhân viên mới có quyền tạo tài khoản khách tháng.',
+    });
+  }
+
+  if (!name || !phone) {
+    return res.status(400).json({ message: 'Vui lòng nhập đầy đủ họ tên và số điện thoại của khách hàng.' });
+  }
+
+  const cleanPhone = String(phone).trim();
+  const cleanEmail = email ? String(email).toLowerCase().trim() : '';
+
+  // Mục 7: Chuyển đổi khách vãng lai thành khách tháng - KHÔNG ĐƯỢC TẠO TÀI KHOẢN MỚI
+  let existingUser = cleanEmail
+    ? dashboardData.users.find((u) => u.email.toLowerCase() === cleanEmail)
+    : undefined;
+  if (!existingUser) {
+    existingUser = dashboardData.users.find((u) => u.phone === cleanPhone);
+  }
+
+  let user: User;
+  let isUpgrade = false;
+
+  if (existingUser) {
+    // Giữ nguyên 100% dữ liệu cá nhân, lịch sử đặt bàn, thanh toán
+    existingUser.role = 'MEMBER';
+    if (!existingUser.password) {
+      existingUser.password = hashPassword('123456');
+      existingUser.firstLogin = true;
+    }
+    user = existingUser;
+    isUpgrade = true;
+  } else {
+    // Tạo tài khoản mới: gán mật khẩu mặc định 123456 ĐÃ ĐƯỢC MÃ HÓA, firstLogin = true
+    const newId = dashboardData.users.length > 0 ? Math.max(...dashboardData.users.map((u) => u.id)) + 1 : 1;
+    user = {
+      id: newId,
+      name: String(name).trim(),
+      phone: cleanPhone,
+      email: cleanEmail || `${cleanPhone}@pingpongbros.customer`,
+      password: hashPassword('123456'), // Mật khẩu bắt buộc mã hóa
+      role: 'MEMBER',
+      firstLogin: true, // Bắt buộc đổi mật khẩu lần đầu
+    };
+    dashboardData.users.push(user);
+  }
+
+  // Tạo hoặc liên kết gói hội viên
+  let memberObj = dashboardData.members.find((m) => m.phone === cleanPhone || (cleanEmail && m.email === cleanEmail));
+  const selectedPackage = String(packageId || 'p1');
+  const packConfig: Record<string, { months: number; price: number; turns: number; name: string }> = {
+    p1: { months: 1, price: 449000, turns: 30, name: 'Gói 1 tháng' },
+    p3: { months: 3, price: 1149000, turns: 90, name: 'Gói 3 tháng' },
+    p6: { months: 6, price: 1999000, turns: 180, name: 'Gói 6 tháng' },
+  };
+  const pack = packConfig[selectedPackage] || packConfig['p1'];
+
+  if (!memberObj) {
+    const newMemberId = dashboardData.members.length > 0 ? Math.max(...dashboardData.members.map((m) => m.id)) + 1 : 1;
+    memberObj = {
+      id: newMemberId,
+      name: user.name,
+      phone: user.phone,
+      email: user.email,
+      packageType: selectedPackage,
+      startDate: new Date().toISOString(),
+      endDate: new Date(Date.now() + pack.months * 30 * 86400000).toISOString(),
+      totalTurns: pack.turns,
+      usedTurns: 0,
+      status: 'active',
+    };
+    dashboardData.members.push(memberObj);
+  }
+  user.memberId = memberObj.id;
+
+  persistStore();
+
+  recordAuditLog(
+    String(staffEmail || 'staff@pingpongbros.vn'),
+    String(requesterRole),
+    isUpgrade ? 'UPGRADE_GUEST_TO_MEMBER' : 'CREATE_MEMBER_ACCOUNT',
+    `${isUpgrade ? 'Chuyển đổi khách vãng lai thành' : 'Tạo mới tài khoản'} khách tháng cho ${user.name} (${user.phone}). Mật khẩu mặc định 123456 đã được mã hóa an toàn, firstLogin=${user.firstLogin}.`
+  );
+
+  const { password: _p, ...safeUser } = user;
+  res.status(201).json({
+    ok: true,
+    message: isUpgrade
+      ? `Đã nâng cấp tài khoản của ${user.name} thành Khách tháng, toàn bộ lịch sử giao dịch và dịch vụ được giữ nguyên.`
+      : `Đã tạo tài khoản Khách tháng cho ${user.name} với mật khẩu mặc định 123456 (đã mã hóa) và kích hoạt yêu cầu đổi mật khẩu ở lần đăng nhập đầu tiên.`,
+    user: safeUser,
+    member: memberObj,
+  });
+});
+
+// API Chuyển tiếp hội thoại từ Chatbot (Mục 2)
+// Khi độ tin cậy < 80%: chuyển cuộc hội thoại sang Nhân viên hỗ trợ (hoặc Quản lý nếu không có nhân viên trực)
+// Sau khi chuyển tiếp, Chatbot không được tiếp tục tham gia
+// Lưu lịch sử chuyển tiếp: thời gian, mã hội thoại, độ tin cậy, lý do, người tiếp nhận
+app.post('/api/ai/transfer-conversation', (req, res) => {
+  const { customerId, customerName, customerEmail, customerPhone, customerRole, confidence, reason, messages } = req.body ?? {};
+
+  // Tìm nhân viên trực tuyến (STAFF)
+  let assignedStaff = dashboardData.users.find((u) => u.role === 'STAFF');
+  // Nếu không có nhân viên trực tuyến, hệ thống tự động chuyển tiếp cho Quản lý (MANAGER)
+  if (!assignedStaff) {
+    assignedStaff = dashboardData.users.find((u) => u.role === 'MANAGER');
+  }
+
+  const assignedRole: 'STAFF' | 'MANAGER' = assignedStaff && assignedStaff.role === 'STAFF' ? 'STAFF' : 'MANAGER';
+  const assignedTo = {
+    id: assignedStaff ? assignedStaff.id : 1,
+    name: assignedStaff ? assignedStaff.name : 'Quản Trị Viên',
+    role: assignedRole,
+    email: assignedStaff ? assignedStaff.email : 'admin@pingpongbros.vn',
+  };
+
+  const convId = `CONV-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+  const convRecord: TransferredConversation = {
+    id: convId,
+    customerId: customerId ? Number(customerId) : undefined,
+    customerName: String(customerName || 'Khách hàng'),
+    customerEmail: customerEmail ? String(customerEmail) : undefined,
+    customerPhone: customerPhone ? String(customerPhone) : undefined,
+    customerRole: (customerRole || 'GUEST') as Role,
+    transferredAt: new Date().toISOString(),
+    confidence: Number(confidence || 0),
+    reason: String(reason || 'Độ tin cậy dưới 80%, chuyển tiếp nhân viên hỗ trợ trực tiếp'),
+    assignedTo,
+    status: 'PENDING',
+    messages: Array.isArray(messages) && messages.length > 0
+      ? messages.map((m: any, idx: number) => ({
+          id: idx + 1,
+          sender: m.role === 'assistant' ? 'agent' : 'user',
+          senderName: m.role === 'assistant' ? 'AI-3 (Trước khi chuyển)' : (customerName || 'Khách hàng'),
+          text: m.text,
+          time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+        }))
+      : [
+          {
+            id: 1,
+            sender: 'system',
+            senderName: 'Hệ Thống',
+            text: `Cuộc hội thoại được chuyển tiếp tự động vì độ tin cậy đạt ${confidence}% (< 80%). Người tiếp nhận: ${assignedTo.name} (${assignedTo.role === 'STAFF' ? 'Nhân viên hỗ trợ' : 'Quản lý'}). Chatbot đã ngừng tham gia.`,
+            time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+          },
+        ],
+  };
+
+  dashboardData.transferredConversations = dashboardData.transferredConversations || [];
+  dashboardData.transferredConversations.push(convRecord);
+  persistStore();
+
+  recordAuditLog(
+    assignedTo.email,
+    assignedTo.role,
+    'TRANSFER_CONVERSATION',
+    `Chuyển tiếp hội thoại ${convId} từ Chatbot đến ${assignedTo.name} (${assignedTo.role}). Khách: ${convRecord.customerName}. Lý do: ${convRecord.reason}. Độ tin cậy: ${confidence}%.`
+  );
+
+  res.json({
+    ok: true,
+    conversationId: convId,
+    assignedTo,
+    message: `Đã chuyển tiếp cuộc hội thoại đến ${assignedTo.role === 'STAFF' ? 'Nhân viên hỗ trợ' : 'Quản lý'}: ${assignedTo.name}. Chatbot sẽ không tiếp tục tham gia cuộc hội thoại này.`,
+    conversation: convRecord,
+  });
+});
+
+// Lấy danh sách hội thoại chuyển tiếp (Chỉ Nhân viên và Quản lý)
+app.get('/api/conversations/transferred', (req, res) => {
+  const role = req.query.role || req.headers['x-user-role'];
+  if (role !== 'STAFF' && role !== 'MANAGER') {
+    return res.status(403).json({
+      ok: false,
+      message: 'Quyền truy cập bị từ chối: Chỉ Nhân viên và Quản lý mới được xem danh sách hội thoại chuyển tiếp từ chatbot.',
+    });
+  }
+
+  res.json({
+    ok: true,
+    total: (dashboardData.transferredConversations || []).length,
+    conversations: [...(dashboardData.transferredConversations || [])].reverse(),
+  });
+});
+
+// Nhân viên / Quản lý phản hồi trực tiếp vào cuộc hội thoại
+app.post('/api/conversations/:id/reply', (req, res) => {
+  const { id } = req.params;
+  const { text, agentName, agentRole } = req.body ?? {};
+
+  const conv = (dashboardData.transferredConversations || []).find((c) => c.id === id);
+  if (!conv) {
+    return res.status(404).json({ message: 'Không tìm thấy cuộc hội thoại.' });
+  }
+
+  const newMessage: TransferredMessage = {
+    id: conv.messages.length + 1,
+    sender: 'agent',
+    senderName: String(agentName || 'Chuyên viên hỗ trợ'),
+    text: String(text || '').trim(),
+    time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+  };
+
+  conv.messages.push(newMessage);
+  conv.status = 'ACCEPTED';
+  persistStore();
+
+  res.json({ ok: true, message: 'Đã gửi phản hồi đến khách hàng thành công.', messageObj: newMessage, conversation: conv });
+});
+
+// Khách hàng gửi tin nhắn tiếp theo trong cuộc hội thoại đã chuyển tiếp
+app.post('/api/conversations/:id/message', (req, res) => {
+  const { id } = req.params;
+  const { text, senderName } = req.body ?? {};
+
+  const conv = (dashboardData.transferredConversations || []).find((c) => c.id === id);
+  if (!conv) {
+    return res.status(404).json({ message: 'Không tìm thấy cuộc hội thoại.' });
+  }
+
+  const newMessage: TransferredMessage = {
+    id: conv.messages.length + 1,
+    sender: 'user',
+    senderName: String(senderName || conv.customerName || 'Khách hàng'),
+    text: String(text || '').trim(),
+    time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+  };
+
+  conv.messages.push(newMessage);
+  persistStore();
+
+  res.json({ ok: true, message: 'Đã gửi tin nhắn đến chuyên viên hỗ trợ.', messageObj: newMessage, conversation: conv });
+});
+
+// Hoàn tất cuộc hội thoại chuyển tiếp
+app.post('/api/conversations/:id/resolve', (req, res) => {
+  const { id } = req.params;
+  const conv = (dashboardData.transferredConversations || []).find((c) => c.id === id);
+  if (!conv) return res.status(404).json({ message: 'Không tìm thấy cuộc hội thoại.' });
+
+  conv.status = 'RESOLVED';
+  conv.messages.push({
+    id: conv.messages.length + 1,
+    sender: 'system',
+    senderName: 'Hệ Thống',
+    text: 'Cuộc hội thoại hỗ trợ đã được đánh dấu hoàn tất. Cảm ơn quý khách!',
+    time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+  });
+
+  persistStore();
+  res.json({ ok: true, message: 'Đã hoàn tất cuộc hội thoại.', conversation: conv });
+});
+
+// API Quét hội viên hết hạn (Mục 8)
+app.post('/api/khach-thang/sweep-expired', (_req, res) => {
+  const expiredIds = sweepExpiredMemberships();
+  persistStore();
+  res.json({ ok: true, message: `Đã quét và xử lý ${expiredIds.length} gói tháng hết hạn.`, expiredIds });
+});
+
+// API Xem Nhật ký Kiểm tra & Truy vết (Audit Log - Mục 9)
+app.get('/api/system/audit-logs', (req, res) => {
+  const role = req.query.role || req.headers['x-user-role'];
+  if (role !== 'MANAGER') {
+    return res.status(403).json({
+      ok: false,
+      message: 'Quyền truy cập bị từ chối: Chỉ Quản lý mới được xem nhật ký kiểm tra và truy vết hệ thống.',
+    });
+  }
+
+  res.json({
+    ok: true,
+    total: (dashboardData.auditLogs || []).length,
+    logs: [...(dashboardData.auditLogs || [])].reverse(),
   });
 });
 
@@ -1024,8 +1533,12 @@ app.post('/api/scheduler/sweep', (req, res) => {
   res.json({ ok: true, cancelledBookings: cancelled });
 });
 
-// Cấu hình
+// Cấu hình - Chỉ dành cho Quản lý (Mục 3)
 app.post('/api/config', (req, res) => {
+  const role = req.body?.role || req.headers['x-user-role'];
+  if (role && role !== 'MANAGER') {
+    return res.status(403).json({ ok: false, message: 'Quyền truy cập bị từ chối: Chỉ Quản lý mới được phép thay đổi cấu hình hệ thống.' });
+  }
   dashboardData.config = { ...dashboardData.config, ...req.body };
   persistStore(); // Lưu dữ liệu vĩnh viễn
   res.json({ ok: true, message: 'Đã lưu cấu hình thành công.', config: dashboardData.config });

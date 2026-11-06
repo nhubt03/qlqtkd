@@ -7,6 +7,7 @@ import { CourtPage } from './pages/CourtPage';
 import { ManagementPage } from './pages/ManagementPage';
 import { ChatWidget } from './components/chatbot/ChatWidget';
 import { Modal } from './components/common/Modal';
+import { FirstLoginPasswordModal } from './components/common/FirstLoginPasswordModal';
 
 function App() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
@@ -150,6 +151,16 @@ function App() {
       <Footer />
       <ChatWidget user={user} dashboard={dashboard} onNavigate={changePage} onNotify={setNotice} />
       {modal && <Modal title={modal.title} onClose={() => setModal(null)}>{modal.content}</Modal>}
+      {user.firstLogin && (
+        <FirstLoginPasswordModal
+          user={user}
+          onSuccess={(updatedUser) => {
+            setUser(updatedUser);
+            localStorage.setItem('pingpongbros_user', JSON.stringify(updatedUser));
+          }}
+          onNotify={setNotice}
+        />
+      )}
     </>
   );
 }

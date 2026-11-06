@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { DashboardResponse, User } from '../../types';
+import type { DashboardResponse, TransferredConversation, User } from '../../types';
 import type { PageId } from '../layout/Shell';
 import { BookingSuccessModal, type BookingSuccessInfo } from '../common/BookingSuccessModal';
+import { transferConversation, sendTransferredMessage } from '../../services/api';
 
 interface ExtractedBooking {
   customerName: string;
@@ -34,11 +35,46 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [botSuccessModal, setBotSuccessModal] = useState<BookingSuccessInfo | null>(null);
+  const [transferredConv, setTransferredConv] = useState<TransferredConversation | null>(null);
+  const [isMuted, setIsMuted] = useState(false); // Khi true: Chatbot ngưng tham gia, chuyển sang người thật
   const thread = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     thread.current?.scrollTo({ top: thread.current.scrollHeight });
   }, [messages, open]);
+
+  // Polling cập nhật phản hồi từ Nhân viên / Quản lý khi cuộc hội thoại đã được chuyển tiếp (Mục 2)
+  useEffect(() => {
+    if (!transferredConv || !open) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/conversations/transferred?role=MANAGER`);
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.conversations)) {
+          const updated = data.conversations.find((c: any) => c.id === transferredConv.id);
+          if (updated && updated.messages.length > transferredConv.messages.length) {
+            const newAgentMsgs = updated.messages.slice(transferredConv.messages.length);
+            setTransferredConv(updated);
+            newAgentMsgs.forEach((m: any) => {
+              if (m.sender === 'agent' || m.sender === 'system') {
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: Date.now() + Math.random(),
+                    role: 'assistant',
+                    text: `👨‍💼 [${m.senderName}]: ${m.text}`,
+                  },
+                ]);
+              }
+            });
+          }
+        }
+      } catch {
+        // bỏ qua lỗi polling
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [transferredConv, open]);
 
   // Bộ bóc tách ngôn ngữ tự nhiên NLP của AI-3
   const parseBookingIntent = (text: string): ExtractedBooking | null => {
@@ -418,11 +454,25 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
     };
   };
 
-  const send = (event: FormEvent<HTMLFormElement>) => {
+  const send = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const text = draft.trim();
     if (!text) return;
+
     const id = Date.now();
+
+    // NẾU HỘI THOẠI ĐÃ ĐƯỢC CHUYỂN TIẾP (MỤC 2): Chatbot KHÔNG ĐƯỢC THAM GIA, tin nhắn chuyển thẳng đến Nhân viên / Quản lý
+    if (isMuted && transferredConv) {
+      setMessages((current) => [...current, { id, role: 'user', text }]);
+      setDraft('');
+      try {
+        await sendTransferredMessage(transferredConv.id, text, user.name);
+      } catch {
+        onNotify('Không thể kết nối đến nhân viên hỗ trợ.');
+      }
+      return;
+    }
+
     const response = answer(text);
     setMessages((current) => [
       ...current,
@@ -437,6 +487,32 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
       },
     ]);
     setDraft('');
+
+    // NẾU ĐỘ TIN CẬY DƯỚI 80% (MỤC 2): TỰ ĐỘNG CHUYỂN CUỘC HỘI THOẠI ĐẾN NHÂN VIÊN (FALLBACK QUẢN LÝ)
+    if (response.transferredToStaff) {
+      try {
+        const transferRes = await transferConversation({
+          customerId: user.id,
+          customerName: user.name,
+          customerEmail: user.email,
+          customerPhone: user.phone,
+          customerRole: user.role,
+          confidence: response.extracted?.confidence ?? 35,
+          reason: response.extracted
+            ? `Bóc tách thông tin đạt ${response.extracted.confidence}% (< 80% ngưỡng quy định)`
+            : 'Câu hỏi không có dữ liệu xác thực hệ thống (< 80% ngưỡng quy định)',
+          messages: [...messages, { role: 'user', text }],
+        });
+
+        if (transferRes.ok && transferRes.conversation) {
+          setTransferredConv(transferRes.conversation);
+          setIsMuted(true); // Chatbot ngưng tham gia cuộc hội thoại theo Mục 2
+          onNotify(`Đã chuyển tiếp cuộc hội thoại đến ${transferRes.assignedTo.name} (${transferRes.assignedTo.role === 'STAFF' ? 'Nhân viên hỗ trợ' : 'Quản lý'}).`);
+        }
+      } catch (err) {
+        console.error('Lỗi khi chuyển tiếp hội thoại:', err);
+      }
+    }
   };
 
   const handleOpenBookingForm = (extracted: ExtractedBooking) => {
@@ -480,12 +556,31 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
         <section className="bot" role="dialog" aria-label="Trợ lý đặt bàn AI">
           <div className="bot-h">
             <b style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span>Trợ lý đặt bàn</span>
-              <span className="tag" style={{ background: '#ffffff33', color: '#fff' }}>AI-3 NLP</span>
+              <span>{isMuted && transferredConv ? 'Hỗ trợ trực tiếp' : 'Trợ lý đặt bàn'}</span>
+              <span className="tag" style={{ background: isMuted ? '#ef4444' : '#ffffff33', color: '#fff' }}>
+                {isMuted ? 'LIVE AGENT' : 'AI-3 NLP'}
+              </span>
             </b>
-            <button className="btn sm ghost" type="button" aria-label="Đóng trợ lý" onClick={() => setOpen(false)}>
-              Đóng
-            </button>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {isMuted && (
+                <button
+                  className="btn sm ghost"
+                  type="button"
+                  title="Chuyển lại về Chatbot AI"
+                  style={{ color: '#fff', fontSize: 11, padding: '2px 6px' }}
+                  onClick={() => {
+                    setIsMuted(false);
+                    setTransferredConv(null);
+                    onNotify('Đã kích hoạt lại Trợ lý AI-3.');
+                  }}
+                >
+                  ↺ Chatbot AI
+                </button>
+              )}
+              <button className="btn sm ghost" type="button" aria-label="Đóng trợ lý" onClick={() => setOpen(false)}>
+                Đóng
+              </button>
+            </div>
           </div>
           <div className="bot-st" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>Xin chào, {user.name}</span>
@@ -493,6 +588,12 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
               🔒 {user.role === 'MANAGER' ? 'Quản lý (Toàn quyền)' : user.role === 'STAFF' ? 'Nhân viên' : user.role === 'TEACHER' ? 'Giáo viên' : user.role === 'MEMBER' ? 'Khách tháng' : 'Khách vãng lai'}
             </span>
           </div>
+          {isMuted && transferredConv && (
+            <div style={{ padding: '6px 12px', background: '#ecfdf5', borderBottom: '1px solid #10b981', fontSize: 12, color: '#047857', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>🟢 Đang kết nối: <b>{transferredConv.assignedTo.name}</b> ({transferredConv.assignedTo.role === 'STAFF' ? 'Nhân viên' : 'Quản lý'})</span>
+              <span style={{ fontSize: 10, background: '#d1fae5', padding: '1px 4px', borderRadius: 3 }}>Mã: {transferredConv.id.slice(0, 15)}</span>
+            </div>
+          )}
           <div className="bot-m" ref={thread} aria-live="polite">
             {!messages.length && (
               <div className="msg b">
@@ -544,14 +645,14 @@ export function ChatWidget({ user, dashboard, onNavigate, onNotify }: ChatWidget
           <form className="bot-f" onSubmit={send}>
             <input
               className="in"
-              placeholder="Nhập yêu cầu: tối mai 7h cho 4 người..."
+              placeholder={isMuted && transferredConv ? `Nhắn tin trực tiếp với ${transferredConv.assignedTo.name}...` : 'Nhập yêu cầu: tối mai 7h cho 4 người...'}
               autoComplete="off"
               aria-label="Tin nhắn"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
             />
-            <button className="btn" type="submit">
-              Gửi
+            <button className="btn" type="submit" style={isMuted ? { background: '#10b981', borderColor: '#059669' } : {}}>
+              {isMuted ? 'Gửi tư vấn' : 'Gửi'}
             </button>
           </form>
         </section>

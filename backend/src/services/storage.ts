@@ -42,6 +42,8 @@ export function initStorage(): void {
           if (Array.isArray(saved.bookings)) dashboardData.bookings = saved.bookings;
           if (Array.isArray(saved.classes)) dashboardData.classes = saved.classes;
           if (Array.isArray(saved.payments)) dashboardData.payments = saved.payments;
+          if (Array.isArray(saved.transferredConversations)) dashboardData.transferredConversations = saved.transferredConversations;
+          if (Array.isArray(saved.auditLogs)) dashboardData.auditLogs = saved.auditLogs;
           if (saved.config && typeof saved.config === 'object') dashboardData.config = { ...dashboardData.config, ...saved.config };
           console.log(`[Storage] Dữ liệu vĩnh viễn đã được phục hồi thành công từ ${STORE_FILE}`);
           return;
@@ -81,6 +83,8 @@ export function persistStore(): void {
         bookings: dashboardData.bookings,
         classes: dashboardData.classes,
         payments: dashboardData.payments,
+        transferredConversations: dashboardData.transferredConversations || [],
+        auditLogs: dashboardData.auditLogs || [],
         config: dashboardData.config,
         savedAt: new Date().toISOString(),
       },

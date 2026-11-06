@@ -1,7 +1,22 @@
-import { useMemo, useState } from 'react';
-import type { DashboardResponse, Member, User } from '../types';
+import { useEffect, useMemo, useState } from 'react';
+import type { AuditLog, DashboardResponse, Member, TransferredConversation, User } from '../types';
 import type { PageId } from '../components/layout/Shell';
-import { approveClass, rejectClass, renewMember, updateConfig, activateMember, createStaffAccount, checkInClass, checkOutClass } from '../services/api';
+import {
+  approveClass,
+  rejectClass,
+  renewMember,
+  updateConfig,
+  activateMember,
+  createStaffAccount,
+  checkInClass,
+  checkOutClass,
+  createMemberAccount,
+  fetchTransferredConversations,
+  replyTransferredConversation,
+  resolveTransferredConversation,
+  sweepExpiredMembers,
+  fetchAuditLogs,
+} from '../services/api';
 
 const packages = [
   { id: 'p1', name: 'Gói 1 tháng', months: 1, price: 449000 },
@@ -24,7 +39,7 @@ export function ManagementPage({ page, dashboard, user, onNotify, onOpenModal }:
   if (page === 'hv') return <MemberHome member={dashboard.members.find((member) => member.id === user.memberId)} config={dashboard.config} />;
   if (page === 'lop') return <ClassesPage dashboard={dashboard} user={user} onNotify={onNotify} />;
   if (page === 'khach') return <MembersPage members={dashboard.members} user={user} onNotify={onNotify} />;
-  if (page === 'doanh') return <StatisticsPage dashboard={dashboard} canSeeForecast={user.role === 'MANAGER'} onNotify={onNotify} />;
+  if (page === 'doanh') return <StatisticsPage dashboard={dashboard} user={user} onNotify={onNotify} />;
   return <SettingsPage dashboard={dashboard} user={user} onNotify={onNotify} />;
 }
 
@@ -470,31 +485,51 @@ function MembersPage({ members, user, onNotify }: { members: Member[]; user: Use
       <div className="pg-h" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h2>Khách tháng & Hội viên</h2>
-          <p>Quản lý danh sách hội viên, đăng ký kích hoạt gói tháng mới và theo dõi lượt chơi.</p>
+          <p>Quản lý danh sách hội viên, tạo tài khoản khách tháng (mật khẩu mã hóa mặc định 123456) và theo dõi lượt chơi.</p>
         </div>
-        <button
-          className="btn"
-          style={{ background: '#16a34a', color: '#fff', fontWeight: 'bold' }}
-          type="button"
-          onClick={() => {
-            setShowActivateModal(!showActivateModal);
-            setRenewingMember(null);
-          }}
-        >
-          {showActivateModal ? 'Đóng form' : '+ Kích hoạt gói tháng cho khách'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            className="btn ghost sm"
+            type="button"
+            title="Quét và chuyển trạng thái các gói cước đã hết hạn (Mục 8)"
+            onClick={async () => {
+              try {
+                const res = await sweepExpiredMembers();
+                onNotify(res.message || 'Đã quét và cập nhật trạng thái hội viên hết hạn.');
+              } catch {
+                onNotify('Không thể quét hội viên hết hạn.');
+              }
+            }}
+          >
+            🔄 Quét gói hết hạn
+          </button>
+          <button
+            className="btn"
+            style={{ background: '#16a34a', color: '#fff', fontWeight: 'bold' }}
+            type="button"
+            onClick={() => {
+              setShowActivateModal(!showActivateModal);
+              setRenewingMember(null);
+            }}
+          >
+            {showActivateModal ? 'Đóng form' : '+ Tạo tài khoản / Kích hoạt gói tháng'}
+          </button>
+        </div>
       </div>
 
-      {/* FORM KÍCH HOẠT GÓI THÁNG MỚI TẠI QUẦY */}
+      {/* FORM KÍCH HOẠT GÓI THÁNG MỚI TẠI QUẦY (MỤC 4 & MỤC 7) */}
       {showActivateModal && (
         <div className="card" style={{ border: '2px solid #16a34a', marginBottom: 16, background: '#f0fdf4' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ color: '#166534', margin: 0 }}>Kích hoạt thẻ Hội viên (MEMBER) & Nạp gói tháng tại quầy</h3>
+            <h3 style={{ color: '#166534', margin: 0 }}>Tạo tài khoản Khách tháng & Kích hoạt gói tại quầy (Mục 4 & Mục 7)</h3>
             <span className="tag t-ok">Thanh toán tại quầy</span>
           </div>
-          <p className="hint" style={{ marginTop: 4 }}>
-            Nhân viên/Quản lý thu tiền gói tháng của khách. Hệ thống sẽ tự động cấp số lượt chơi tương ứng và nâng cấp tài khoản của khách thành <b>MEMBER</b>.
-          </p>
+          <div style={{ marginTop: 8, padding: '8px 12px', background: '#dcfce7', borderRadius: 6, fontSize: 13, color: '#14532d', lineHeight: 1.5 }}>
+            <b>🛡️ Quy định bảo mật tài khoản (Mục 4, 6 & 7):</b><br />
+            • Mật khẩu mặc định được gán là <b>123456</b> và <b>bắt buộc được mã hóa Scrypt</b> trước khi lưu vào CSDL (không lưu dạng văn bản thuần).<br />
+            • Kích hoạt trạng thái <b>bắt buộc đổi mật khẩu ở lần đăng nhập đầu tiên</b>.<br />
+            • Nếu khách hàng đã từng có tài khoản khách vãng lai, hệ thống <b>tự động chuyển đổi loại tài khoản sang khách tháng và bảo toàn 100% dữ liệu lịch sử</b> đặt bàn, giao dịch (không tạo tài khoản trùng).
+          </div>
           <form onSubmit={handleActivateNew} style={{ marginTop: 12 }}>
             <div className="fg">
               <div>
@@ -634,9 +669,104 @@ function MembersPage({ members, user, onNotify }: { members: Member[]; user: Use
 
 
 
-function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: DashboardResponse; canSeeForecast: boolean; onNotify: (message: string) => void }) {
+function StatisticsPage({ dashboard, user, onNotify }: { dashboard: DashboardResponse; user: User; onNotify: (message: string) => void }) {
+  const isManager = user.role === 'MANAGER';
+  const isStaff = user.role === 'STAFF';
   const payments = dashboard.payments;
-  const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
+
+  const [activeTab, setActiveTab] = useState<'revenue' | 'transfers' | 'audit'>('revenue');
+
+  // Doanh thu: Nhân viên chỉ được xem hôm nay ('today'). Quản lý được xem tất cả.
+  const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month'>(isStaff ? 'today' : 'all');
+
+  // Hội thoại chuyển tiếp từ Chatbot
+  const [conversations, setConversations] = useState<TransferredConversation[]>([]);
+  const [loadingConv, setLoadingConv] = useState(false);
+  const [selectedConv, setSelectedConv] = useState<TransferredConversation | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
+
+  // Nhật ký kiểm toán hệ thống (Manager)
+  const [systemLogs, setSystemLogs] = useState<AuditLog[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [auditSearch, setAuditSearch] = useState('');
+
+  // Tải danh sách hội thoại chuyển tiếp
+  const loadConversations = async () => {
+    setLoadingConv(true);
+    try {
+      const res = await fetchTransferredConversations(user.role);
+      if (res && res.conversations) {
+        setConversations(res.conversations);
+        if (selectedConv) {
+          const updated = res.conversations.find((c: TransferredConversation) => c.id === selectedConv.id);
+          if (updated) setSelectedConv(updated);
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingConv(false);
+    }
+  };
+
+  // Tải nhật ký hệ thống
+  const loadAuditLogs = async () => {
+    if (!isManager) return;
+    setLoadingLogs(true);
+    try {
+      const res = await fetchAuditLogs(user.role);
+      if (res && res.logs) {
+        setSystemLogs(res.logs);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'transfers') {
+      loadConversations();
+      const interval = setInterval(loadConversations, 5000);
+      return () => clearInterval(interval);
+    }
+    if (activeTab === 'audit' && isManager) {
+      loadAuditLogs();
+    }
+  }, [activeTab, isManager]);
+
+  const handleSendReply = async () => {
+    if (!selectedConv || !replyText.trim()) return;
+    setSendingReply(true);
+    try {
+      const res = await replyTransferredConversation(selectedConv.id, replyText.trim(), user.name, user.role);
+      if (res && res.conversation) {
+        setSelectedConv(res.conversation);
+        setConversations((prev) => prev.map((c) => (c.id === res.conversation.id ? res.conversation : c)));
+      }
+      setReplyText('');
+      onNotify('Đã gửi phản hồi đến khách hàng.');
+    } catch {
+      onNotify('Lỗi khi gửi phản hồi.');
+    } finally {
+      setSendingReply(false);
+    }
+  };
+
+  const handleResolve = async (convId: string) => {
+    try {
+      const res = await resolveTransferredConversation(convId);
+      if (res && res.conversation) {
+        setSelectedConv(res.conversation);
+        setConversations((prev) => prev.map((c) => (c.id === res.conversation.id ? res.conversation : c)));
+      }
+      onNotify('Đã đánh dấu hoàn tất cuộc hội thoại.');
+    } catch {
+      onNotify('Lỗi khi hoàn tất cuộc hội thoại.');
+    }
+  };
 
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
@@ -673,24 +803,30 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
       .reduce((sum, p) => sum + p.amount, 0);
   }, [payments, currentMonth, currentYear]);
 
-  // Lọc danh sách thanh toán theo kỳ đã chọn
+  // Lọc danh sách thanh toán theo kỳ đã chọn (Nhân viên bị khóa ở 'today')
+  const effectivePeriod = isStaff ? 'today' : periodFilter;
+
   const filteredPayments = useMemo(() => {
-    if (periodFilter === 'today') {
+    if (effectivePeriod === 'today') {
       return payments.filter((p) => p.createdAt && p.createdAt.slice(0, 10) === todayStr);
     }
-    if (periodFilter === 'week') {
+    if (effectivePeriod === 'week') {
       return payments.filter((p) => new Date(p.createdAt) >= startOfWeek);
     }
-    if (periodFilter === 'month') {
+    if (effectivePeriod === 'month') {
       return payments.filter((p) => {
         const d = new Date(p.createdAt);
         return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
       });
     }
     return payments;
-  }, [payments, periodFilter, todayStr, startOfWeek, currentMonth, currentYear]);
+  }, [payments, effectivePeriod, todayStr, startOfWeek, currentMonth, currentYear]);
 
   const exportCSV = () => {
+    if (isStaff) {
+      onNotify('Lỗi 403: Nhân viên không được phép xuất báo cáo doanh thu. Quyền hạn thuộc về Quản lý.');
+      return;
+    }
     if (!filteredPayments.length) {
       onNotify('Chưa có dữ liệu thanh toán để xuất báo cáo.');
       return;
@@ -717,18 +853,16 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
     document.body.removeChild(link);
     onNotify('Đã xuất báo cáo doanh thu thành công (file CSV tương thích Excel)!');
   };
-  const max = Math.max(...filteredPayments.map((item) => item.amount), 1);
 
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
 
-  // Tính toán thực tế 100%: Mật độ đặt sân và lớp học cho từng khung giờ từ 06:00 đến 21:00
+  // Dự báo AI-2
   const forecastHours = useMemo(() => {
     const hours = [];
     const openH = dashboard.config.openingHour || 6;
     const closeH = dashboard.config.closingHour || 21;
 
     for (let h = openH; h < closeH; h++) {
-      // 1. Đếm đơn đặt bàn thực tế của khách hàng trong giờ h ngày selectedDate
       const activeBookings = (dashboard.bookings || []).filter((b) => {
         if (['CANCELLED', 'CHECKED_OUT'].includes(b.status)) return false;
         const bDate = b.startTime.slice(0, 10);
@@ -738,7 +872,6 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
         return h >= bStart && h < bEnd;
       });
 
-      // 2. Đếm lớp học của giáo viên đã duyệt trong giờ h ngày selectedDate
       const activeClasses = (dashboard.classes || []).filter((c) => {
         if (c.status !== 'approved') return false;
         const cDate = c.date.slice(0, 10);
@@ -755,18 +888,18 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
 
       let level: 'low' | 'med' | 'high' = 'low';
       let levelLabel = 'Thấp';
-      let color = '#27ae60'; // Xanh lá (<40%)
+      let color = '#27ae60';
       if (ratio >= 0.7) {
         level = 'high';
         levelLabel = 'Cao';
-        color = '#c0392b'; // Đỏ (>=70%)
+        color = '#c0392b';
       } else if (ratio >= 0.4) {
         level = 'med';
         levelLabel = 'Vừa';
-        color = '#f39c12'; // Vàng cam (40-69%)
+        color = '#f39c12';
       } else if (occupiedTables === 0) {
         levelLabel = 'Trống';
-        color = '#94a3b8'; // Xám khi 0 bàn
+        color = '#94a3b8';
       }
 
       hours.push({
@@ -803,167 +936,550 @@ function StatisticsPage({ dashboard, canSeeForecast, onNotify }: { dashboard: Da
     aiInsight = `Chưa ghi nhận đơn đặt sân hoặc lớp học nào trong ngày ${new Date(selectedDate).toLocaleDateString('vi-VN')}. Toàn bộ 16 bàn đang trống và sẵn sàng tiếp nhận khách.`;
   }
 
+  const filteredLogs = useMemo(() => {
+    if (!auditSearch.trim()) return systemLogs;
+    const q = auditSearch.toLowerCase();
+    return systemLogs.filter(
+      (l) =>
+        l.action.toLowerCase().includes(q) ||
+        l.actorEmail.toLowerCase().includes(q) ||
+        l.details.toLowerCase().includes(q) ||
+        l.actorRole.toLowerCase().includes(q)
+    );
+  }, [systemLogs, auditSearch]);
+
   return (
     <>
-      <div className="pg-h">
+      <div className="pg-h" style={{ marginBottom: 12 }}>
         <div>
-          <h2>{canSeeForecast ? 'Thống kê & Dự đoán AI' : 'Thống kê doanh thu'}</h2>
-          <p>{canSeeForecast ? 'Thống kê doanh thu và AI-2 dự báo mật độ giờ cao điểm để quản lý chủ động nhân sự.' : 'Nhân viên xem nhật ký thanh toán và doanh thu trong ngày.'}</p>
+          <h2>{isManager ? 'Quản lý & Thống kê hệ thống' : 'Báo cáo doanh thu & Trực hỗ trợ'}</h2>
+          <p>
+            {isManager
+              ? 'Phân hệ quản lý toàn quyền: Doanh thu theo kỳ, tiếp nhận chuyển tiếp từ Chatbot, dự báo AI và nhật ký kiểm toán.'
+              : 'Phân hệ nhân viên: Theo dõi doanh thu trong ngày và tiếp nhận các cuộc hội thoại chuyển tiếp từ Chatbot AI.'}
+          </p>
         </div>
       </div>
 
-      <section className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
-          <div>
-            <h3 style={{ margin: 0 }}>Báo cáo Doanh thu</h3>
-            <p className="hint" style={{ margin: '2px 0 0' }}>Theo dõi chi tiết doanh thu hôm nay, tuần này, tháng này và toàn thời gian.</p>
-          </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button className={`btn sm ${periodFilter === 'all' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('all')}>Tất cả</button>
-            <button className={`btn sm ${periodFilter === 'today' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('today')}>Hôm nay</button>
-            <button className={`btn sm ${periodFilter === 'week' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('week')}>Tuần này</button>
-            <button className={`btn sm ${periodFilter === 'month' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('month')}>Tháng này</button>
-          </div>
-        </div>
+      {/* Tabs điều hướng */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, borderBottom: '2px solid #e2e8f0', paddingBottom: 8 }}>
+        <button
+          className={`btn ${activeTab === 'revenue' ? '' : 'ghost'}`}
+          type="button"
+          onClick={() => setActiveTab('revenue')}
+        >
+          💰 Báo cáo Doanh thu {isStaff && '(Chỉ Trong ngày)'}
+        </button>
+        <button
+          className={`btn ${activeTab === 'transfers' ? '' : 'ghost'}`}
+          type="button"
+          onClick={() => setActiveTab('transfers')}
+          style={{ position: 'relative' }}
+        >
+          💬 Chuyển tiếp từ Chatbot
+          {conversations.filter((c) => c.status !== 'RESOLVED').length > 0 && (
+            <span
+              style={{
+                background: '#ef4444',
+                color: '#fff',
+                borderRadius: '50%',
+                padding: '2px 7px',
+                fontSize: 11,
+                marginLeft: 6,
+                fontWeight: 'bold',
+              }}
+            >
+              {conversations.filter((c) => c.status !== 'RESOLVED').length}
+            </span>
+          )}
+        </button>
+        {isManager ? (
+          <button
+            className={`btn ${activeTab === 'audit' ? '' : 'ghost'}`}
+            type="button"
+            onClick={() => setActiveTab('audit')}
+          >
+            🛡️ Nhật ký kiểm toán & Truy vết
+          </button>
+        ) : (
+          <button
+            className="btn ghost"
+            type="button"
+            onClick={() => onNotify('Quyền hạn bị từ chối: Chỉ Quản lý mới được phép xem nhật ký kiểm toán hệ thống.')}
+            style={{ opacity: 0.6 }}
+            title="Chỉ dành cho Quản lý"
+          >
+            🔒 Nhật ký kiểm toán (Chỉ Quản lý)
+          </button>
+        )}
+      </div>
 
-        <div className="kpi" style={{ marginTop: 12 }}>
-          <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: 8, padding: 12 }}>
-            <b style={{ color: '#0f172a' }}>{money(todayRevenue)}</b>
-            <span>Doanh thu Hôm nay</span>
-          </div>
-          <div style={{ background: '#eff6ff', border: '1.5px solid #3b82f6', borderRadius: 8, padding: 12 }}>
-            <b style={{ color: '#1d4ed8' }}>{money(weekRevenue)}</b>
-            <span>Doanh thu Tuần này</span>
-          </div>
-          <div style={{ background: '#f0fdf4', border: '1.5px solid #22c55e', borderRadius: 8, padding: 12 }}>
-            <b style={{ color: '#15803d' }}>{money(monthRevenue)}</b>
-            <span>Doanh thu Tháng này</span>
-          </div>
-          <div style={{ background: '#faf5ff', border: '1px solid #c084fc', borderRadius: 8, padding: 12 }}>
-            <b style={{ color: '#7e22ce' }}>{money(dashboard.stats.totalRevenue)}</b>
-            <span>Tổng tích lũy</span>
-          </div>
-        </div>
-      </section>
+      {/* TAB 1: DOANH THU & BÁO CÁO */}
+      {activeTab === 'revenue' && (
+        <>
+          <section className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+              <div>
+                <h3 style={{ margin: 0 }}>
+                  {isStaff ? 'Doanh thu Trong ngày (Phân quyền Nhân viên)' : 'Báo cáo Doanh thu Tổng hợp'}
+                </h3>
+                <p className="hint" style={{ margin: '2px 0 0' }}>
+                  {isStaff
+                    ? 'Nhân viên chỉ có quyền xem doanh thu trong ngày hôm nay. Không được xem doanh thu tuần/tháng hoặc xuất báo cáo.'
+                    : 'Quản lý xem báo cáo doanh thu theo ngày, tuần, tháng, quý, năm và xuất báo cáo CSV/Excel.'}
+                </p>
+              </div>
 
-      {/* Phân hệ AI-2 Dự báo Giờ cao điểm */}
-      {canSeeForecast && (
-        <section className="card" style={{ marginTop: 16 }}>
-          <div className="pg-h" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+              {/* Bộ lọc kỳ: Nhân viên bị khóa chỉ chọn được 'Hôm nay' */}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                {isStaff ? (
+                  <span className="tag t-bl" style={{ padding: '6px 12px', fontSize: 13 }}>
+                    🔒 Cố định: Hôm nay ({todayStr})
+                  </span>
+                ) : (
+                  <>
+                    <button className={`btn sm ${periodFilter === 'all' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('all')}>Toàn thời gian</button>
+                    <button className={`btn sm ${periodFilter === 'today' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('today')}>Hôm nay</button>
+                    <button className={`btn sm ${periodFilter === 'week' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('week')}>Tuần này</button>
+                    <button className={`btn sm ${periodFilter === 'month' ? '' : 'ghost'}`} type="button" onClick={() => setPeriodFilter('month')}>Tháng này</button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="kpi" style={{ marginTop: 12 }}>
+              <div style={{ background: '#f8fafc', border: '2px solid #3b82f6', borderRadius: 8, padding: 12 }}>
+                <b style={{ color: '#0f172a' }}>{money(todayRevenue)}</b>
+                <span>Doanh thu Hôm nay ({todayStr})</span>
+              </div>
+              <div style={{ background: isStaff ? '#f1f5f9' : '#eff6ff', border: '1px solid #cbd5e1', borderRadius: 8, padding: 12 }}>
+                <b style={{ color: isStaff ? '#94a3b8' : '#1d4ed8' }}>
+                  {isStaff ? '🔒 Chỉ Quản lý' : money(weekRevenue)}
+                </b>
+                <span>Doanh thu Tuần này</span>
+              </div>
+              <div style={{ background: isStaff ? '#f1f5f9' : '#f0fdf4', border: '1px solid #cbd5e1', borderRadius: 8, padding: 12 }}>
+                <b style={{ color: isStaff ? '#94a3b8' : '#15803d' }}>
+                  {isStaff ? '🔒 Chỉ Quản lý' : money(monthRevenue)}
+                </b>
+                <span>Doanh thu Tháng này</span>
+              </div>
+              <div style={{ background: isStaff ? '#f1f5f9' : '#faf5ff', border: '1px solid #cbd5e1', borderRadius: 8, padding: 12 }}>
+                <b style={{ color: isStaff ? '#94a3b8' : '#7e22ce' }}>
+                  {isStaff ? '🔒 Chỉ Quản lý' : money(dashboard.stats.totalRevenue)}
+                </b>
+                <span>Tổng tích lũy</span>
+              </div>
+            </div>
+          </section>
+
+          {/* Phân hệ AI-2 Dự báo Giờ cao điểm - CHỈ QUẢN LÝ ĐƯỢC XEM */}
+          {isManager && (
+            <section className="card" style={{ marginTop: 16 }}>
+              <div className="pg-h" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                    <span>🤖 AI-2 Dự báo mật độ & giờ cao điểm</span>
+                    <span className="tag" style={{ background: '#1d4ba8', color: '#fff' }}>Dữ liệu thực tế</span>
+                  </h3>
+                  <p className="hint" style={{ margin: '4px 0 0' }}>
+                    Phân tích tỷ lệ chiếm dụng sân theo thời gian thực từ các đơn đặt bàn và lịch lớp học đã duyệt.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <label htmlFor="forecast-date" style={{ fontSize: 13, fontWeight: 'bold' }}>Ngày xem:</label>
+                    <input
+                      id="forecast-date"
+                      type="date"
+                      className="in"
+                      style={{ padding: '4px 8px', fontSize: 13, width: 'auto' }}
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="legend" style={{ display: 'flex', gap: 6 }}>
+                    <span className="tag" style={{ background: '#eafaf1', color: '#27ae60', border: '1px solid #27ae60' }}>Thấp (&lt;40%)</span>
+                    <span className="tag" style={{ background: '#fef9e7', color: '#f39c12', border: '1px solid #f39c12' }}>Vừa (40-69%)</span>
+                    <span className="tag" style={{ background: '#fdedec', color: '#c0392b', border: '1px solid #c0392b' }}>Cao (≥70%)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 190, padding: '20px 10px 10px', background: 'var(--surface2, #f8f9fa)', borderRadius: 8, overflowX: 'auto' }}>
+                {forecastHours.map((item) => (
+                  <div
+                    key={item.hour}
+                    style={{ flex: '1 1 0', minWidth: 42, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}
+                    title={`${item.label}: Thực tế chiếm dụng ${item.occupiedTables}/16 bàn (${item.heightPct}%) · Khách đặt: ${item.bookedTablesCount} bàn, Lớp học: ${item.classTablesCount} bàn`}
+                  >
+                    <small style={{ fontSize: 10, color: item.color, fontWeight: 'bold' }}>{item.levelLabel}</small>
+                    <div style={{ width: '100%', height: 110, display: 'flex', alignItems: 'flex-end', background: '#e2e8f0', borderRadius: 4 }}>
+                      <div
+                        style={{
+                          width: '100%',
+                          height: `${Math.max(item.heightPct, 4)}%`,
+                          background: item.color,
+                          borderRadius: 4,
+                          transition: 'height 0.4s ease',
+                        }}
+                      />
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: item.level === 'high' ? 'bold' : 'normal', color: item.level === 'high' ? '#c0392b' : 'inherit' }}>
+                      {item.hour}h
+                    </span>
+                    <small style={{ fontSize: 10, color: '#64748b' }}>{item.occupiedTables} bàn</small>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ marginTop: 12, padding: '10px 14px', background: '#f0f4fc', borderRadius: 6, fontSize: 13, color: '#103070', lineHeight: 1.5 }}>
+                💡 <b>Nhận định vận hành AI ({new Date(selectedDate).toLocaleDateString('vi-VN')}):</b> {aiInsight}
+              </div>
+            </section>
+          )}
+
+          {/* Nhật ký thanh toán */}
+          <section className="card" style={{ marginTop: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <h3 style={{ margin: 0 }}>
+                  Nhật ký thanh toán ({isStaff ? 'Hôm nay' : periodFilter === 'all' ? 'Toàn bộ' : periodFilter === 'today' ? 'Hôm nay' : periodFilter === 'week' ? 'Tuần này' : 'Tháng này'})
+                </h3>
+                <small className="hint">{filteredPayments.length} giao dịch ghi nhận</small>
+              </div>
+
+              {isManager ? (
+                <button className="btn" type="button" onClick={exportCSV} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span>📥 Xuất báo cáo (CSV/Excel)</span>
+                </button>
+              ) : (
+                <button
+                  className="btn ghost"
+                  type="button"
+                  onClick={() => onNotify('Lỗi 403: Nhân viên không được phép xuất báo cáo. Quyền hạn chỉ dành cho Quản lý!')}
+                  style={{ opacity: 0.6 }}
+                >
+                  🔒 Xuất báo cáo (Chỉ Quản lý)
+                </button>
+              )}
+            </div>
+
+            <div className="ovf" style={{ marginTop: 10 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Thời gian</th>
+                    <th>Khoản thu</th>
+                    <th>Nhân viên thu</th>
+                    <th className="num">Số tiền</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredPayments.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: 'center', color: '#64748b', padding: '18px 0' }}>
+                        Chưa có giao dịch thanh toán nào trong kỳ {effectivePeriod === 'today' ? 'hôm nay' : 'này'}.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredPayments.map((payment) => (
+                      <tr key={payment.id}>
+                        <td className="num">{new Date(payment.createdAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}</td>
+                        <td>{payment.reference} <span className={`tag ${payment.type === 'goi' ? 't-bl' : 't-ok'}`}>{payment.type === 'goi' ? 'Gói' : 'Tiền chơi'}</span></td>
+                        <td>{payment.who}</td>
+                        <td className="num">{money(payment.amount)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      )}
+
+      {/* TAB 2: HỘI THOẠI CHUYỂN TIẾP TỪ CHATBOT (MỤC 2) */}
+      {activeTab === 'transfers' && (
+        <section className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
             <div>
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
-                <span>🤖 AI-2 Dự báo mật độ & giờ cao điểm</span>
-                <span className="tag" style={{ background: '#1d4ba8', color: '#fff' }}>Dữ liệu thực tế</span>
-              </h3>
-              <p className="hint" style={{ margin: '4px 0 0' }}>
-                Phân tích tỷ lệ chiếm dụng sân theo thời gian thực từ các đơn đặt bàn và lịch lớp học đã duyệt.
+              <h3 style={{ margin: 0 }}>💬 Hội thoại Chatbot chuyển tiếp ({conversations.length})</h3>
+              <p className="hint" style={{ margin: '2px 0 0' }}>
+                Khi Chatbot có độ tin cậy dưới 80%, hệ thống tự động chuyển tiếp cuộc trò chuyện sang Nhân viên trực quầy (hoặc Quản lý nếu nhân viên vắng mặt). Chatbot sẽ dừng phản hồi để nhân sự trực tiếp hỗ trợ khách hàng.
               </p>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <label htmlFor="forecast-date" style={{ fontSize: 13, fontWeight: 'bold' }}>Ngày xem:</label>
-                <input
-                  id="forecast-date"
-                  type="date"
-                  className="in"
-                  style={{ padding: '4px 8px', fontSize: 13, width: 'auto' }}
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                />
-              </div>
-              <div className="legend" style={{ display: 'flex', gap: 6 }}>
-                <span className="tag" style={{ background: '#eafaf1', color: '#27ae60', border: '1px solid #27ae60' }}>Thấp (&lt;40%)</span>
-                <span className="tag" style={{ background: '#fef9e7', color: '#f39c12', border: '1px solid #f39c12' }}>Vừa (40-69%)</span>
-                <span className="tag" style={{ background: '#fdedec', color: '#c0392b', border: '1px solid #c0392b' }}>Cao (≥70%)</span>
-              </div>
+            <button className="btn sm ghost" type="button" onClick={loadConversations} disabled={loadingConv}>
+              {loadingConv ? 'Đang tải...' : '🔄 Làm mới'}
+            </button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: selectedConv ? '1fr 1fr' : '1fr', gap: 16 }}>
+            {/* Danh sách các cuộc hội thoại */}
+            <div className="ovf">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Mã hội thoại</th>
+                    <th>Khách hàng</th>
+                    <th>Thời gian</th>
+                    <th>Độ tin cậy</th>
+                    <th>Người tiếp nhận</th>
+                    <th>Trạng thái</th>
+                    <th>Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {conversations.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--muted)' }}>
+                        Hiện không có cuộc hội thoại nào cần tiếp nhận từ Chatbot.
+                      </td>
+                    </tr>
+                  ) : (
+                    conversations.map((conv) => (
+                      <tr
+                        key={conv.id}
+                        style={{
+                          background: selectedConv?.id === conv.id ? 'var(--surface2, #f0f7ff)' : undefined,
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => setSelectedConv(conv)}
+                      >
+                        <td>
+                          <b>{conv.id}</b>
+                          <br />
+                          <small style={{ color: '#64748b' }}>{conv.reason}</small>
+                        </td>
+                        <td>
+                          <b>{conv.customerName}</b>
+                          <br />
+                          <span className="tag t-bl" style={{ fontSize: 10 }}>{conv.customerRole}</span>{' '}
+                          <small style={{ color: '#64748b' }}>{conv.customerPhone || conv.customerEmail}</small>
+                        </td>
+                        <td>{new Date(conv.transferredAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}</td>
+                        <td>
+                          <span
+                            className="tag"
+                            style={{
+                              background: conv.confidence < 80 ? '#fee2e2' : '#dcfce7',
+                              color: conv.confidence < 80 ? '#b91c1c' : '#15803d',
+                              fontWeight: 'bold',
+                            }}
+                          >
+                            {conv.confidence}% {conv.confidence < 80 ? '(< 80%)' : ''}
+                          </span>
+                        </td>
+                        <td>
+                          <span className="tag t-ok">{conv.assignedTo?.name || 'Nhân viên'}</span>
+                        </td>
+                        <td>
+                          {conv.status === 'PENDING' && <span className="tag t-am">Chờ xử lý</span>}
+                          {conv.status === 'ACCEPTED' && <span className="tag t-bl">Đang chat</span>}
+                          {conv.status === 'RESOLVED' && <span className="tag t-ok">Đã hoàn tất</span>}
+                        </td>
+                        <td>
+                          <button
+                            className="btn sm"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedConv(conv);
+                            }}
+                          >
+                            Mở chat
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
-          </div>
 
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 190, padding: '20px 10px 10px', background: 'var(--surface2, #f8f9fa)', borderRadius: 8, overflowX: 'auto' }}>
-            {forecastHours.map((item) => (
+            {/* Chi tiết và ô chat với khách hàng */}
+            {selectedConv && (
               <div
-                key={item.hour}
-                style={{ flex: '1 1 0', minWidth: 42, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}
-                title={`${item.label}: Thực tế chiếm dụng ${item.occupiedTables}/16 bàn (${item.heightPct}%) · Khách đặt: ${item.bookedTablesCount} bàn, Lớp học: ${item.classTablesCount} bàn`}
+                style={{
+                  border: '1px solid var(--border, #cbd5e1)',
+                  borderRadius: 8,
+                  padding: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  maxHeight: 520,
+                  background: 'var(--surface, #ffffff)',
+                }}
               >
-                <small style={{ fontSize: 10, color: item.color, fontWeight: 'bold' }}>{item.levelLabel}</small>
-                <div style={{ width: '100%', height: 110, display: 'flex', alignItems: 'flex-end', background: '#e2e8f0', borderRadius: 4 }}>
-                  <div
-                    style={{
-                      width: '100%',
-                      height: `${Math.max(item.heightPct, 4)}%`,
-                      background: item.color,
-                      borderRadius: 4,
-                      transition: 'height 0.4s ease',
-                    }}
-                  />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #e2e8f0', paddingBottom: 10, marginBottom: 10 }}>
+                  <div>
+                    <h4 style={{ margin: 0 }}>Hội thoại {selectedConv.id}</h4>
+                    <small style={{ color: '#64748b' }}>
+                      Khách hàng: <b>{selectedConv.customerName}</b> ({selectedConv.customerPhone || selectedConv.customerEmail || 'Chưa cung cấp liên hệ'})
+                    </small>
+                    <div style={{ marginTop: 4 }}>
+                      <span className="tag" style={{ background: '#fef3c7', color: '#b45309', fontSize: 11 }}>
+                        Lý do: {selectedConv.reason} (Độ tin cậy {selectedConv.confidence}%)
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {selectedConv.status !== 'RESOLVED' && (
+                      <button
+                        className="btn sm"
+                        type="button"
+                        style={{ background: '#16a34a', color: '#fff', borderColor: '#16a34a' }}
+                        onClick={() => handleResolve(selectedConv.id)}
+                      >
+                        ✓ Đã hỗ trợ xong
+                      </button>
+                    )}
+                    <button className="btn sm ghost" type="button" onClick={() => setSelectedConv(null)}>
+                      ✕
+                    </button>
+                  </div>
                 </div>
-                <span style={{ fontSize: 11, fontWeight: item.level === 'high' ? 'bold' : 'normal', color: item.level === 'high' ? '#c0392b' : 'inherit' }}>
-                  {item.hour}h
-                </span>
-                <small style={{ fontSize: 10, color: '#64748b' }}>{item.occupiedTables} bàn</small>
-              </div>
-            ))}
-          </div>
 
-          <div style={{ marginTop: 12, padding: '10px 14px', background: '#f0f4fc', borderRadius: 6, fontSize: 13, color: '#103070', lineHeight: 1.5 }}>
-            💡 <b>Nhận định vận hành AI ({new Date(selectedDate).toLocaleDateString('vi-VN')}):</b> {aiInsight}
+                {/* Danh sách tin nhắn */}
+                <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingRight: 4, marginBottom: 12 }}>
+                  {selectedConv.messages.map((m) => {
+                    const isAgent = m.sender === 'agent';
+                    const isSystem = m.sender === 'system';
+                    if (isSystem) {
+                      return (
+                        <div key={m.id} style={{ textAlign: 'center', margin: '4px 0' }}>
+                          <span style={{ fontSize: 11, background: '#f1f5f9', color: '#475569', padding: '3px 8px', borderRadius: 4 }}>
+                            ⚙️ {m.text} ({m.time})
+                          </span>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div
+                        key={m.id}
+                        style={{
+                          alignSelf: isAgent ? 'flex-end' : 'flex-start',
+                          maxWidth: '80%',
+                          background: isAgent ? '#2563eb' : '#f1f5f9',
+                          color: isAgent ? '#ffffff' : '#0f172a',
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          fontSize: 13,
+                        }}
+                      >
+                        <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 2, fontWeight: 'bold' }}>
+                          {m.senderName} • {m.time}
+                        </div>
+                        <div>{m.text}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Nhập phản hồi */}
+                {selectedConv.status !== 'RESOLVED' ? (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleSendReply();
+                    }}
+                    style={{ display: 'flex', gap: 8 }}
+                  >
+                    <input
+                      type="text"
+                      className="in"
+                      placeholder={`Phản hồi với vai trò ${user.name} (${user.role})...`}
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      disabled={sendingReply}
+                      style={{ flex: 1 }}
+                    />
+                    <button className="btn" type="submit" disabled={sendingReply || !replyText.trim()}>
+                      {sendingReply ? 'Đang gửi...' : 'Gửi'}
+                    </button>
+                  </form>
+                ) : (
+                  <div style={{ padding: '8px', background: '#f0fdf4', color: '#166534', borderRadius: 6, fontSize: 13, textAlign: 'center' }}>
+                    Cuộc trò chuyện này đã được đánh dấu hoàn tất.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </section>
       )}
 
-      <section className="card" style={{ marginTop: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <div>
-            <h3 style={{ margin: 0 }}>Nhật ký thanh toán ({periodFilter === 'all' ? 'Tất cả' : periodFilter === 'today' ? 'Hôm nay' : periodFilter === 'week' ? 'Tuần này' : 'Tháng này'})</h3>
-            <small className="hint">{filteredPayments.length} giao dịch ghi nhận</small>
+      {/* TAB 3: NHẬT KÝ KIỂM TOÁN VÀ TRUY VẾT - CHỈ DÀNH CHO QUẢN LÝ (MỤC 9) */}
+      {activeTab === 'audit' && isManager && (
+        <section className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+            <div>
+              <h3 style={{ margin: 0 }}>🛡️ Nhật ký kiểm toán & Truy vết hệ thống (Audit Logs)</h3>
+              <p className="hint" style={{ margin: '2px 0 0' }}>
+                Ghi nhận tự động tất cả các thao tác nhạy cảm: Chuyển tiếp hội thoại chatbot, tạo tài khoản khách tháng, thay đổi vai trò, đổi mật khẩu lần đầu, quét gói tháng hết hạn và chỉnh sửa cấu hình.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="text"
+                className="in sm"
+                placeholder="Tìm kiếm theo hành động, email, vai trò..."
+                value={auditSearch}
+                onChange={(e) => setAuditSearch(e.target.value)}
+                style={{ width: 260 }}
+              />
+              <button className="btn sm ghost" type="button" onClick={loadAuditLogs} disabled={loadingLogs}>
+                {loadingLogs ? 'Đang tải...' : '🔄 Làm mới'}
+              </button>
+            </div>
           </div>
-          <button className="btn" type="button" onClick={exportCSV} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span>📥 Xuất báo cáo (CSV/Excel)</span>
-          </button>
-        </div>
-        <div className="ovf" style={{ marginTop: 10 }}>
-          <table>
-            <thead>
-              <tr>
-                <th>Thời gian</th>
-                <th>Khoản thu</th>
-                <th>Nhân viên</th>
-                <th className="num">Số tiền</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredPayments.length === 0 ? (
-                <tr>
-                  <td colSpan={4} style={{ textAlign: 'center', color: '#64748b', padding: '18px 0' }}>
-                    Chưa có giao dịch thanh toán nào trong kỳ {periodFilter === 'all' ? 'này' : periodFilter === 'today' ? 'hôm nay' : periodFilter === 'week' ? 'tuần này' : 'tháng này'}.
-                  </td>
-                </tr>
-              ) : (
-                filteredPayments.map((payment) => (
-                  <tr key={payment.id}>
-                    <td className="num">{new Date(payment.createdAt).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}</td>
-                    <td>{payment.reference} <span className={`tag ${payment.type === 'goi' ? 't-bl' : 't-ok'}`}>{payment.type === 'goi' ? 'Gói' : 'Tiền chơi'}</span></td>
-                    <td>{payment.who}</td>
-                    <td className="num">{money(payment.amount)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
 
-      {!canSeeForecast && (
-        <button className="btn ghost" style={{ marginTop: 12 }} type="button" onClick={() => onNotify('Báo cáo phân tích nâng cao và dự báo AI chỉ dành cho Quản lý.')}>
-          Thông tin phân quyền
-        </button>
+          <div className="ovf">
+            <table>
+              <thead>
+                <tr>
+                  <th>Thời gian</th>
+                  <th>Người thực hiện</th>
+                  <th>Vai trò</th>
+                  <th>Hành động</th>
+                  <th>Chi tiết truy vết</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--muted)' }}>
+                      Chưa ghi nhận sự kiện kiểm toán nào phù hợp.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredLogs.map((log) => (
+                    <tr key={log.id}>
+                      <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                        {new Date(log.timestamp).toLocaleString('vi-VN')}
+                      </td>
+                      <td><b>{log.actorEmail}</b></td>
+                      <td>
+                        <span className={`tag ${log.actorRole === 'MANAGER' ? 't-rd' : log.actorRole === 'STAFF' ? 't-bl' : 't-gr'}`}>
+                          {log.actorRole}
+                        </span>
+                      </td>
+                      <td><b>{log.action}</b></td>
+                      <td style={{ maxWidth: 450, wordBreak: 'break-word', fontSize: 12 }}>
+                        {log.details}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
     </>
   );
 }
 
-interface AuditLog {
+interface SettingActionLog {
   id: number;
   user: string;
   action: string;
@@ -982,7 +1498,7 @@ function SettingsPage({ dashboard, user, onNotify }: { dashboard: DashboardRespo
   const [classCutoffHour, setClassCutoffHour] = useState(config.classCutoffHour || 19);
   const [saving, setSaving] = useState(false);
 
-  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [logs, setLogs] = useState<SettingActionLog[]>([]);
 
   const handleSaveConfig = async () => {
     setSaving(true);
@@ -1003,7 +1519,7 @@ function SettingsPage({ dashboard, user, onNotify }: { dashboard: DashboardRespo
       config.closingHour = closingHour;
       config.classCutoffHour = classCutoffHour;
 
-      const newLog: AuditLog = {
+      const newLog: SettingActionLog = {
         id: Date.now(),
         user: user.name,
         action: 'Cập nhật cấu hình hệ thống',

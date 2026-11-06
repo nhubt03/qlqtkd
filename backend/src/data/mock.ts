@@ -1,6 +1,6 @@
 import type { Booking, ClassSession, DashboardResponse, Member, Payment, TableInfo, User } from '../types.js';
 
-// Dữ liệu người dùng: Duy nhất tài khoản Quản trị viên (Admin)
+// Dữ liệu người dùng: Quản trị viên (Admin) và Nhân viên trực hỗ trợ
 const users: User[] = [
   {
     id: 1,
@@ -10,9 +10,17 @@ const users: User[] = [
     password: 'admin123',
     role: 'MANAGER',
   },
+  {
+    id: 2,
+    name: 'Nhân Viên Trực Sân',
+    email: 'nhanvien@pingpongbros.vn',
+    phone: '0935222333',
+    password: 'password123',
+    role: 'STAFF',
+  },
 ];
 
-// Toàn bộ dữ liệu mẫu (Hội viên, Đặt bàn, Lớp học, Thanh toán) đã được làm sạch
+// Toàn bộ dữ liệu mẫu (Hội viên, Đặt bàn, Lớp học, Thanh toán)
 const members: Member[] = [];
 const bookings: Booking[] = [];
 const classes: ClassSession[] = [];
@@ -56,6 +64,8 @@ export const dashboardData: DashboardResponse = {
   bookings,
   classes,
   payments,
+  transferredConversations: [],
+  auditLogs: [],
   stats: {
     totalRevenue: 0,
     todayBookings: 0,

@@ -7,6 +7,44 @@ export interface User {
   phone: string;
   role: Role;
   memberId?: number | null;
+  firstLogin?: boolean;
+}
+
+export interface AuditLog {
+  id: number;
+  timestamp: string;
+  actorEmail: string;
+  actorRole: string;
+  action: string;
+  details: string;
+}
+
+export interface TransferredMessage {
+  id: number;
+  sender: 'user' | 'agent' | 'system';
+  senderName: string;
+  text: string;
+  time: string;
+}
+
+export interface TransferredConversation {
+  id: string; // Mã cuộc hội thoại (ví dụ: CONV-1730948271)
+  customerId?: number;
+  customerName: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  customerRole: Role;
+  transferredAt: string;
+  confidence: number;
+  reason: string;
+  assignedTo: {
+    id: number;
+    name: string;
+    role: 'STAFF' | 'MANAGER';
+    email: string;
+  };
+  status: 'PENDING' | 'ACCEPTED' | 'RESOLVED';
+  messages: TransferredMessage[];
 }
 
 export interface Member {
@@ -88,6 +126,8 @@ export interface DashboardResponse {
   bookings: Booking[];
   classes: ClassSession[];
   payments: Payment[];
+  transferredConversations?: TransferredConversation[];
+  auditLogs?: AuditLog[];
   stats: {
     totalRevenue: number;
     todayBookings: number;
