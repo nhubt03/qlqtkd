@@ -1144,11 +1144,14 @@ app.post(['/api/users/member', '/api/khach-thang/tai-khoan'], (req, res) => {
 app.post('/api/ai/transfer-conversation', (req, res) => {
   const { customerId, customerName, customerEmail, customerPhone, customerRole, confidence, reason, messages } = req.body ?? {};
 
-  // Tìm nhân viên trực tuyến (STAFF)
-  let assignedStaff = dashboardData.users.find((u) => u.role === 'STAFF');
-  // Nếu không có nhân viên trực tuyến, hệ thống tự động chuyển tiếp cho Quản lý (MANAGER)
-  if (!assignedStaff) {
+  // Phân cấp chuyển tiếp theo yêu cầu:
+  // - Khách hàng (GUEST, MEMBER) và Giáo viên (TEACHER): chuyển cho Nhân viên (STAFF). Nếu không có nhân viên trực, chuyển tiếp Quản lý (MANAGER).
+  // - Nhân viên (STAFF): chuyển tiếp trực tiếp cho Quản lý (MANAGER).
+  let assignedStaff: any = null;
+  if (customerRole === 'STAFF') {
     assignedStaff = dashboardData.users.find((u) => u.role === 'MANAGER');
+  } else {
+    assignedStaff = dashboardData.users.find((u) => u.role === 'STAFF') || dashboardData.users.find((u) => u.role === 'MANAGER');
   }
 
   const assignedRole: 'STAFF' | 'MANAGER' = assignedStaff && assignedStaff.role === 'STAFF' ? 'STAFF' : 'MANAGER';
@@ -1295,6 +1298,49 @@ app.post('/api/conversations/:id/resolve', (req, res) => {
 
   persistStore();
   res.json({ ok: true, message: 'Đã hoàn tất cuộc hội thoại.', conversation: conv });
+});
+
+// Nhân viên chuyển tiếp cuộc hội thoại qua cho Quản lý khi không giải quyết được
+app.post('/api/conversations/:id/escalate-to-manager', (req, res) => {
+  const { id } = req.params;
+  const { staffEmail } = req.body ?? {};
+
+  const conv = (dashboardData.transferredConversations || []).find((c) => c.id === id);
+  if (!conv) return res.status(404).json({ message: 'Không tìm thấy cuộc hội thoại.' });
+
+  const manager = dashboardData.users.find((u) => u.role === 'MANAGER') || {
+    id: 1,
+    name: 'Quản Trị Viên',
+    role: 'MANAGER' as const,
+    email: 'admin@pingpongbros.vn',
+  };
+
+  conv.assignedTo = {
+    id: manager.id,
+    name: manager.name,
+    role: 'MANAGER',
+    email: manager.email,
+  };
+  conv.reason = `${conv.reason} (Nhân viên không giải quyết được, đã chuyển tiếp qua Quản lý)`;
+
+  conv.messages.push({
+    id: conv.messages.length + 1,
+    sender: 'system',
+    senderName: 'Hệ Thống',
+    text: `Nhân viên quầy không giải đáp được yêu cầu nên đã chuyển tiếp cuộc hội thoại qua cho Quản lý (${manager.name}) tiếp nhận xử lý.`,
+    time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+  });
+
+  persistStore();
+
+  recordAuditLog(
+    staffEmail || 'staff@pingpongbros.vn',
+    'STAFF',
+    'Chuyển tiếp hội thoại qua Quản lý',
+    `Nhân viên chuyển tiếp cuộc hội thoại ${conv.id} của ${conv.customerName} (${conv.customerRole}) qua cho Quản lý ${manager.name} tiếp nhận giải quyết.`
+  );
+
+  res.json({ ok: true, message: `Đã chuyển tiếp cuộc hội thoại sang Quản lý (${manager.name}).`, conversation: conv });
 });
 
 // API Quét hội viên hết hạn (Mục 8)

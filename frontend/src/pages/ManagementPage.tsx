@@ -14,6 +14,7 @@ import {
   fetchTransferredConversations,
   replyTransferredConversation,
   resolveTransferredConversation,
+  escalateConversationToManager,
   sweepExpiredMembers,
   fetchAuditLogs,
 } from '../services/api';
@@ -802,6 +803,19 @@ function StatisticsPage({ dashboard, user, onNotify }: { dashboard: DashboardRes
     }
   };
 
+  const handleEscalateToManager = async (convId: string) => {
+    try {
+      const res = await escalateConversationToManager(convId, user.email);
+      if (res && res.conversation) {
+        setSelectedConv(res.conversation);
+        setConversations((prev) => prev.map((c) => (c.id === res.conversation.id ? res.conversation : c)));
+      }
+      onNotify('Đã chuyển tiếp cuộc hội thoại qua cho Quản lý xử lý thành công.');
+    } catch {
+      onNotify('Lỗi khi chuyển tiếp qua Quản lý.');
+    }
+  };
+
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
 
@@ -1356,7 +1370,18 @@ function StatisticsPage({ dashboard, user, onNotify }: { dashboard: DashboardRes
                       </span>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {isStaff && selectedConv.status !== 'RESOLVED' && selectedConv.assignedTo?.role !== 'MANAGER' && (
+                      <button
+                        className="btn sm"
+                        type="button"
+                        style={{ background: '#d97706', color: '#fff', borderColor: '#d97706', fontWeight: 'bold' }}
+                        onClick={() => handleEscalateToManager(selectedConv.id)}
+                        title="Chuyển cuộc hội thoại này qua Quản lý khi nhân viên không trả lời được"
+                      >
+                        ↗ Chuyển qua Quản lý
+                      </button>
+                    )}
                     {selectedConv.status !== 'RESOLVED' && (
                       <button
                         className="btn sm"

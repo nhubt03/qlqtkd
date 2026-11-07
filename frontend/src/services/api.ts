@@ -218,6 +218,12 @@ export async function resolveTransferredConversation(convId: string): Promise<an
   return data;
 }
 
+// Nhân viên chuyển tiếp cuộc hội thoại qua cho Quản lý khi không giải quyết được
+export async function escalateConversationToManager(convId: string, staffEmail?: string): Promise<any> {
+  const { data } = await api.post(`/conversations/${convId}/escalate-to-manager`, { staffEmail });
+  return data;
+}
+
 // Lấy báo cáo doanh thu theo phân quyền (Mục 3)
 export async function fetchRevenueReport(role: string, period: string): Promise<any> {
   const { data } = await api.get('/reports/revenue', { params: { role, period } });
