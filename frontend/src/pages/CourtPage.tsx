@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { checkInBooking, checkOutBooking, createBooking, createClassSession, createWaitlist, fetchDashboard } from '../services/api';
+import { checkInBooking, checkOutBooking, checkOutClass, createBooking, createClassSession, createWaitlist, fetchDashboard } from '../services/api';
 import type { Booking, DashboardResponse, TableInfo, User } from '../types';
 import { venueNow } from '../utils/time';
 import { validateCustomerContact } from '../utils/validation';
 import { BookingSuccessModal, type BookingSuccessInfo } from '../components/common/BookingSuccessModal';
 
 type CourtState = 'trong' | 'dat' | 'choi' | 'lop' | 'hoc' | 'dong';
-type CourtStatus = { state: CourtState; booking?: Booking; className?: string; end?: number };
+type CourtStatus = { state: CourtState; booking?: Booking; className?: string; end?: number; classSession?: any };
 type Filter = 'all' | CourtState;
 
 const stateLabels: Record<CourtState, string> = {
@@ -70,7 +70,7 @@ export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
       const start = new Date(item.date);
       return dayKey(start) === dayKey(viewedAt) && hour >= item.startHour && hour < item.endHour;
     });
-    if (classSession) return { state: 'lop', className: classSession.teacherName, end: classSession.endHour };
+    if (classSession) return { state: 'lop', className: classSession.teacherName, end: classSession.endHour, classSession };
 
     const booking = data.bookings.find((item) => {
       if (item.tableId !== table.tableNumber || !['PENDING', 'CONFIRMED', 'CHECKED_IN'].includes(item.status)) return false;
@@ -125,6 +125,17 @@ export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
       onNotify(res.message || 'Check-out hoàn tất.');
     } catch {
       onNotify('Lỗi khi thực hiện check-out.');
+    }
+  };
+
+  const handleCheckOutClass = async (classId: number) => {
+    try {
+      const res = await checkOutClass(classId);
+      await refresh();
+      setSelectedTable(null);
+      onNotify(res.message || 'Check-out lớp học thành công! Bàn đã được giải phóng.');
+    } catch (err: any) {
+      onNotify(err?.response?.data?.message || 'Lỗi khi check-out lớp học.');
     }
   };
 
@@ -345,25 +356,36 @@ export function CourtPage({ dashboard, user, onNotify }: CourtPageProps) {
         </section>
 
         <div className="col">
-          <section className="card" aria-label={isStaff && selected ? 'Chi tiết bàn' : 'Đặt bàn'}>
-            {isStaff && selected
+          <section className="card" aria-label={(isStaff || user.role === 'TEACHER') && selected ? 'Chi tiết bàn' : 'Đặt bàn'}>
+            {(isStaff || user.role === 'TEACHER') && selected
               ? <CourtDetail
                   table={selected}
                   status={getStatus(selected)}
                   config={data.config}
+                  user={user}
                   onBack={() => setSelectedTable(null)}
                   onCheckIn={handleCheckIn}
                   onCheckOut={handleCheckOut}
                   onOpenWalkInCheckout={(target) => setWalkInCheckoutTarget(target)}
+                  onCheckOutClass={handleCheckOutClass}
                 />
               : user.role === 'TEACHER'
                 ? <ClassRequest config={data.config} onNotify={onNotify} onRefresh={refresh} user={user} />
                 : <BookingForm dashboard={data} user={user} onNotify={onNotify} onRefresh={refresh} onSuccessBooking={(info) => setSuccessModal(info)} />}
           </section>
           <section className="card">
-            {isStaff
-              ? <WaitlistPanel bookings={data.bookings} />
-              : <MyBookings bookings={data.bookings.filter((booking) => booking.phone === user.phone)} />}
+            {isStaff ? (
+              <WaitlistPanel bookings={data.bookings} />
+            ) : user.role === 'TEACHER' ? (
+              <TeacherClassesPanel
+                classes={data.classes.filter(
+                  (c) => c.teacherName === user.name || (user.id && (c as any).teacherId === user.id) || !c.teacherName
+                )}
+                onCheckOutClass={handleCheckOutClass}
+              />
+            ) : (
+              <MyBookings bookings={data.bookings.filter((booking) => booking.phone === user.phone)} />
+            )}
           </section>
         </div>
       </div>
@@ -473,22 +495,28 @@ function CourtDetail({
   table,
   status,
   config,
+  user,
   onBack,
   onCheckIn,
   onCheckOut,
   onOpenWalkInCheckout,
+  onCheckOutClass,
 }: {
   table: TableInfo;
   status: CourtStatus;
   config: DashboardResponse['config'];
+  user?: User;
   onBack: () => void;
   onCheckIn: (id: number) => void;
   onCheckOut: (id: number) => void;
   onOpenWalkInCheckout: (target: { booking: Booking; tableNumber: number }) => void;
+  onCheckOutClass?: (classId: number) => void;
 }) {
   const booking = status.booking;
   const isPlaying = booking && (booking.status === 'CHECKED_IN' || status.state === 'choi');
   const isBooked = booking && (booking.status === 'CONFIRMED' || booking.status === 'PENDING' || status.state === 'dat');
+  const isTeacher = user?.role === 'TEACHER';
+  const isStaff = user?.role === 'MANAGER' || user?.role === 'STAFF';
 
   return (
     <>
@@ -521,7 +549,21 @@ function CourtDetail({
           <dt>Trạng thái</dt><dd><span className={`tag ${booking.status === 'CHECKED_IN' ? 't-ok' : 't-am'}`}>{bookingLabels[booking.status][0]}</span></dd>
         </dl>
       ) : status.state === 'lop' ? (
-        <p className="hint" style={{ margin: '10px 0' }}>{status.className} đang sử dụng bàn này. Lớp kết thúc lúc {status.end}:00.</p>
+        <div style={{ margin: '12px 0' }}>
+          <p className="hint">
+            <b>{status.className}</b> đang sử dụng bàn này. Lớp kết thúc lúc {status.end}:00.
+          </p>
+          {(isTeacher || isStaff) && status.classSession && (
+            <button
+              className="btn red"
+              style={{ width: '100%', marginTop: 12, fontWeight: 'bold' }}
+              type="button"
+              onClick={() => onCheckOutClass && onCheckOutClass(status.classSession.id)}
+            >
+              Check-out lớp học & Giải phóng bàn
+            </button>
+          )}
+        </div>
       ) : status.state === 'trong' ? (
         <p className="hint" style={{ margin: '10px 0' }}>Bàn trống lúc {timeText(new Date())}. Sức chứa tối đa {table.capacity} người.</p>
       ) : status.state === 'hoc' ? (
@@ -531,7 +573,7 @@ function CourtDetail({
       )}
 
       {/* Nút check-in nếu trạng thái bàn là "Đã đặt" */}
-      {booking && isBooked && !isPlaying && (
+      {booking && isBooked && !isPlaying && (isStaff || isTeacher) && (
         <button
           className="btn"
           style={{ width: '100%', marginTop: 14, background: '#2563eb', color: '#fff', fontWeight: 'bold' }}
@@ -543,7 +585,7 @@ function CourtDetail({
       )}
 
       {/* Nút check-out nếu trạng thái bàn là "Đang chơi" */}
-      {booking && isPlaying && (
+      {booking && isPlaying && (isStaff || isTeacher) && (
         <button
           className="btn red"
           style={{ width: '100%', marginTop: 14, fontWeight: 'bold' }}
@@ -556,7 +598,9 @@ function CourtDetail({
         </button>
       )}
 
-      <button className="btn ghost" style={{ width: '100%', marginTop: 8 }} type="button" onClick={onBack}>Về khung đặt bàn</button>
+      <button className="btn ghost" style={{ width: '100%', marginTop: 8 }} type="button" onClick={onBack}>
+        {isTeacher ? 'Về khung đăng ký lớp' : 'Về khung đặt bàn'}
+      </button>
     </>
   );
 }
@@ -990,6 +1034,60 @@ function WaitlistPanel({ bookings }: { bookings: Booking[] }) {
         </table>
       </div>
       {!bookings.some((booking) => booking.status === 'PENDING') && <p className="hint" style={{ marginTop: 8 }}>Chưa có khách nào đang chờ.</p>}
+    </>
+  );
+}
+
+function TeacherClassesPanel({
+  classes,
+  onCheckOutClass,
+}: {
+  classes: any[];
+  onCheckOutClass: (classId: number) => void;
+}) {
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 style={{ margin: 0 }}>Lớp dạy của tôi</h3>
+        <span className="tag t-bl">{classes.length} lớp</span>
+      </div>
+      {classes.length ? (
+        <ul className="res-list" style={{ marginTop: 10 }}>
+          {classes.slice(0, 8).map((cls) => {
+            const isApproved = cls.status === 'approved';
+            const isPending = cls.status === 'pending';
+            const isDone = !!cls.checkedOutAt;
+            return (
+              <li key={cls.id} style={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 6 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <b>Bàn {cls.tables.join(', ')}</b> · {dateText(cls.date)} ({String(cls.startHour).padStart(2, '0')}:00 – {String(cls.endHour).padStart(2, '0')}:00)
+                  <br />
+                  <small className="hint">
+                    {cls.checkedOutAt ? 'Đã hoàn thành buổi dạy' : isApproved ? 'Đang hoạt động trên sân' : isPending ? 'Chờ duyệt' : 'Từ chối'}
+                  </small>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className={`tag ${isDone ? 't-gr' : isApproved ? 't-ok' : isPending ? 't-am' : 't-rd'}`}>
+                    {isDone ? 'Đã check-out' : isApproved ? 'Đã duyệt' : isPending ? 'Chờ duyệt' : 'Từ chối'}
+                  </span>
+                  {isApproved && !isDone && (
+                    <button
+                      className="btn sm"
+                      style={{ background: '#dc2626', color: '#fff', fontSize: 12, fontWeight: 'bold' }}
+                      type="button"
+                      onClick={() => onCheckOutClass(cls.id)}
+                    >
+                      Check-out
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="hint" style={{ marginTop: 10 }}>Bạn chưa có lớp học nào được đăng ký.</p>
+      )}
     </>
   );
 }

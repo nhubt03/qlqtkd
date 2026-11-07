@@ -618,13 +618,13 @@ app.post(['/api/classes/:id/checkin', '/api/lop-hoc/:id/checkin'], (req, res) =>
   res.json({ ok: true, message: `Check-in thành công cho lớp học của ${session.teacherName} (Bàn ${session.tables.join(', ')}).`, session });
 });
 
-// Check-out lớp học (Quản lý hoặc Nhân viên)
+// Check-out lớp học (Quản lý, Nhân viên hoặc Giáo viên)
 app.post(['/api/classes/:id/checkout', '/api/lop-hoc/:id/checkout'], (req, res) => {
   const id = Number(req.params.id);
   const session = dashboardData.classes.find((c) => c.id === id);
   if (!session) return res.status(404).json({ message: 'Không tìm thấy lớp học.' });
   if (!session.checkedInAt) {
-    return res.status(400).json({ message: 'Lớp học chưa được check-in.' });
+    session.checkedInAt = new Date().toISOString();
   }
   session.checkedOutAt = new Date().toISOString();
   // Giải phóng các bàn của lớp học sang 'available'
@@ -633,6 +633,12 @@ app.post(['/api/classes/:id/checkout', '/api/lop-hoc/:id/checkout'], (req, res) 
     if (table) table.status = 'available';
   });
   persistStore();
+  recordAuditLog(
+    'TEACHER',
+    session.teacherName || 'Giáo viên',
+    'Check-out lớp học',
+    `Check-out lớp học #${session.id} của giáo viên ${session.teacherName}. Đã giải phóng bàn ${session.tables.join(', ')}.`
+  );
   res.json({ ok: true, message: `Check-out hoàn tất cho lớp học của ${session.teacherName}. Bàn ${session.tables.join(', ')} đã được giải phóng.`, session });
 });
 

@@ -40,6 +40,9 @@ export function ManagementPage({ page, dashboard, user, onNotify, onOpenModal }:
   if (page === 'lop') return <ClassesPage dashboard={dashboard} user={user} onNotify={onNotify} />;
   if (page === 'khach') return <MembersPage members={dashboard.members} user={user} onNotify={onNotify} />;
   if (page === 'doanh') return <StatisticsPage dashboard={dashboard} user={user} onNotify={onNotify} />;
+  if (user.role === 'TEACHER') {
+    return <ClassesPage dashboard={dashboard} user={user} onNotify={onNotify} />;
+  }
   return <SettingsPage dashboard={dashboard} user={user} onNotify={onNotify} />;
 }
 
@@ -251,9 +254,40 @@ function ClassesPage({ dashboard, user, onNotify }: { dashboard: DashboardRespon
                           <b>Lý do:</b> {item.rejectReason || 'Lịch sân không phù hợp hoặc trùng lịch khác.'}
                         </span>
                       ) : item.status === 'approved' ? (
-                        <span style={{ color: '#16a34a', fontSize: 13 }}>
-                          ✓ Đã duyệt lên sân (Bàn {item.tables.join(', ')})
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <span style={{ color: '#16a34a', fontSize: 13, marginRight: 4 }}>
+                            ✓ Bàn {item.tables.join(', ')}
+                          </span>
+                          {!item.checkedInAt ? (
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button className="btn sm" type="button" onClick={() => handleClassCheckIn(item.id)}>
+                                Check-in lớp
+                              </button>
+                              <button
+                                className="btn sm ghost"
+                                type="button"
+                                style={{ color: '#dc2626', borderColor: '#dc2626' }}
+                                onClick={() => handleClassCheckOut(item.id)}
+                              >
+                                Check-out kết thúc
+                              </button>
+                            </div>
+                          ) : !item.checkedOutAt ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span className="tag t-ok" style={{ fontSize: 11 }}>Đang dạy</span>
+                              <button
+                                className="btn sm"
+                                style={{ background: '#dc2626', color: '#fff', fontWeight: 'bold' }}
+                                type="button"
+                                onClick={() => handleClassCheckOut(item.id)}
+                              >
+                                Check-out lớp
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="tag t-gr" style={{ fontSize: 11 }}>✓ Đã check-out hoàn tất</span>
+                          )}
+                        </div>
                       ) : (
                         <span style={{ color: '#d97706', fontSize: 13 }}>
                           ⏳ Đang chờ quản lý phê duyệt
@@ -1500,6 +1534,15 @@ function SettingsPage({ dashboard, user, onNotify }: { dashboard: DashboardRespo
 
   const [logs, setLogs] = useState<SettingActionLog[]>([]);
 
+  if (user.role !== 'MANAGER') {
+    return (
+      <section className="card" style={{ marginTop: 16 }}>
+        <h3>Quyền truy cập bị từ chối</h3>
+        <p className="hint">Chức năng Cấu hình hệ thống và Nhật ký AI chỉ dành riêng cho Quản trị viên (Manager). Giáo viên và các vai trò khác không có quyền truy cập trang này.</p>
+      </section>
+    );
+  }
+
   const handleSaveConfig = async () => {
     setSaving(true);
     try {
@@ -1682,41 +1725,44 @@ function SettingsPage({ dashboard, user, onNotify }: { dashboard: DashboardRespo
         </div>
       </section>
 
-      <section className="card" style={{ marginTop: 16 }}>
-        <h3>Nhật ký AI (AI-1, AI-2, AI-3)</h3>
-        <div className="ovf" style={{ marginTop: 10 }}>
-          <table>
-            <thead>
-              <tr>
-                <th>Tính năng</th>
-                <th>Đầu vào</th>
-                <th>Đầu ra</th>
-                <th>Độ tin cậy</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><b>AI-1: Khung giờ thay thế</b></td>
-                <td>Khung giờ kín bàn</td>
-                <td>Gợi ý khung giờ lân cận có bàn trống</td>
-                <td><span className="tag t-bl">95%</span></td>
-              </tr>
-              <tr>
-                <td><b>AI-2: Dự báo cao điểm</b></td>
-                <td>Lịch sử đặt bàn & thứ trong tuần</td>
-                <td>Mật độ theo giờ: Thấp, Vừa, Cao (17h-20h)</td>
-                <td><span className="tag t-ok">90%</span></td>
-              </tr>
-              <tr>
-                <td><b>AI-3: NLP Chatbot</b></td>
-                <td>Câu ngôn ngữ tự nhiên, viết tắt</td>
-                <td>Số người, ngày, giờ, thời lượng</td>
-                <td><span className="tag t-am">88%</span></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      {/* Nhật ký AI - Chỉ Quản lý mới có quyền xem, đã loại bỏ hoàn toàn đối với vai trò Giáo viên và nhân sự khác */}
+      {user.role === 'MANAGER' && (
+        <section className="card" style={{ marginTop: 16 }}>
+          <h3>Nhật ký AI (AI-1, AI-2, AI-3)</h3>
+          <div className="ovf" style={{ marginTop: 10 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Tính năng</th>
+                  <th>Đầu vào</th>
+                  <th>Đầu ra</th>
+                  <th>Độ tin cậy</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><b>AI-1: Khung giờ thay thế</b></td>
+                  <td>Khung giờ kín bàn</td>
+                  <td>Gợi ý khung giờ lân cận có bàn trống</td>
+                  <td><span className="tag t-bl">95%</span></td>
+                </tr>
+                <tr>
+                  <td><b>AI-2: Dự báo cao điểm</b></td>
+                  <td>Lịch sử đặt bàn & thứ trong tuần</td>
+                  <td>Mật độ theo giờ: Thấp, Vừa, Cao (17h-20h)</td>
+                  <td><span className="tag t-ok">90%</span></td>
+                </tr>
+                <tr>
+                  <td><b>AI-3: NLP Chatbot</b></td>
+                  <td>Câu ngôn ngữ tự nhiên, viết tắt</td>
+                  <td>Số người, ngày, giờ, thời lượng</td>
+                  <td><span className="tag t-am">88%</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </>
   );
 }
